@@ -1,3 +1,5 @@
+use async_std::channel::{bounded, Receiver, Sender};
+use async_std::task;
 use cocoa::appkit::{NSPasteboard, NSPasteboardTypeString};
 use cocoa::base::{id, nil};
 use cocoa::foundation::NSString;
@@ -8,8 +10,6 @@ use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::io::prelude::*;
 use std::str::FromStr;
-use std::sync::mpsc::{sync_channel, SyncSender};
-use std::thread;
 use std::time::{Duration, Instant};
 
 unsafe fn nsstring_to_slice(s: &id) -> &str {
@@ -85,7 +85,7 @@ impl FromStr for Command {
         match cmd {
             "list" => Ok(Command::List),
             "quit" => Ok(Command::Quit),
-            "add" | "show" | "set" | "load" if parts.len() < 1 => {
+            "add" | "show" | "set" | "load" if parts.is_empty() => {
                 Err(CommandParseError::InsufficientArgs)
             }
             "add" => {
@@ -168,12 +168,7 @@ fn show_entry(idx: u32, entries: &Entries) {
         .enumerate()
         .find(|(i, _item)| idx == (*i).try_into().unwrap())
     {
-        Some((_, item)) => println!(
-            "{:?}: {:?} tags: {:?}",
-            idx,
-            shorten(&item.value),
-            item.tags
-        ),
+        Some((_, item)) => println!("{:?}: {:?} tags: {:?}", idx, &item.value, item.tags),
         None => println!("item at {:?} not found", idx),
     }
 }
@@ -188,10 +183,10 @@ fn shorten(s: &String) -> String {
     }
 }
 
-fn sync_loop(tx: SyncSender<Message>) {
+async fn sync_loop(sender: Sender<Message>) {
     let mut last_hash: u64 = 0;
     loop {
-        thread::sleep(Duration::from_millis(500));
+        task::sleep(Duration::from_millis(500)).await;
         let val = unsafe { get_current_entry() };
         if val.is_empty() {
             continue;
@@ -203,11 +198,11 @@ fn sync_loop(tx: SyncSender<Message>) {
         }
 
         last_hash = hash;
-        tx.send(Message::Insert(val)).unwrap();
+        sender.send(Message::Insert(val)).await.unwrap();
     }
 }
 
-fn cmd_loop(tx: SyncSender<Message>) {
+async fn cmd_loop(sender: Sender<Message>) {
     let mut rl = Editor::<()>::new();
     loop {
         let readline = rl.readline(":> ");
@@ -215,15 +210,38 @@ fn cmd_loop(tx: SyncSender<Message>) {
             Ok(line) => {
                 rl.add_history_entry(line.as_str());
                 match line.parse::<Command>() {
-                    Ok(cmd) => cmd,
                     Err(CommandParseError::EmptyCommand) => continue,
+                    Ok(cmd) => cmd,
                     Err(err) => Command::Invalid(err),
                 }
             }
             Err(_) => Command::Quit,
         };
+        sender.send(Message::Call(cmd)).await.unwrap();
+    }
+}
 
-        tx.send(Message::Call(cmd)).unwrap();
+async fn net_loop(_sender: Sender<Message>) {
+    loop {
+        task::sleep(Duration::from_secs(1)).await;
+        println!("net-loop is sleeping...")
+    }
+}
+
+async fn main_loop(receiver: Receiver<Message>) {
+    let mut entries = Entries::new();
+
+    loop {
+        if let Ok(msg) = receiver.recv().await {
+            match msg {
+                Message::Insert(value) => handle_insert(value, &mut entries),
+                Message::Call(cmd) => {
+                    if !handle_call(cmd, &mut entries) {
+                        return;
+                    }
+                }
+            };
+        }
     }
 }
 
@@ -253,6 +271,7 @@ fn handle_insert(s: String, entries: &mut Entries) {
 
 fn handle_call(cmd: Command, entries: &mut Entries) -> bool {
     match cmd {
+        Command::Quit => false,
         Command::List => {
             dump_entries(entries);
             true
@@ -261,7 +280,6 @@ fn handle_call(cmd: Command, entries: &mut Entries) -> bool {
             show_entry(idx, entries);
             true
         }
-        Command::Quit => false,
         Command::Add(value) => {
             unsafe { set_current_entry(value) };
             true
@@ -304,25 +322,9 @@ fn handle_call(cmd: Command, entries: &mut Entries) -> bool {
 }
 
 fn main() {
-    let mut entries: Entries = Entries::new();
-
-    let (tx, rx) = sync_channel::<Message>(0);
-
-    let tx_ = tx.clone();
-    thread::spawn(move || sync_loop(tx_));
-
-    thread::spawn(move || cmd_loop(tx));
-
-    loop {
-        if let Ok(msg) = rx.recv_timeout(Duration::from_millis(500)) {
-            match msg {
-                Message::Insert(value) => handle_insert(value, &mut entries),
-                Message::Call(cmd) => {
-                    if !handle_call(cmd, &mut entries) {
-                        return;
-                    }
-                }
-            };
-        }
-    }
+    let (sender, receiver) = bounded::<Message>(1);
+    task::spawn(sync_loop(sender.clone()));
+    task::spawn(net_loop(sender.clone()));
+    task::spawn(cmd_loop(sender));
+    task::block_on(main_loop(receiver));
 }
