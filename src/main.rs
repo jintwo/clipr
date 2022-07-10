@@ -1,4 +1,8 @@
+use anyhow::Result;
 use async_std::channel::{bounded, Receiver, Sender};
+use async_std::io;
+use async_std::net::{TcpListener, TcpStream};
+use async_std::prelude::*;
 use async_std::task;
 use cocoa::appkit::{NSPasteboard, NSPasteboardTypeString};
 use cocoa::base::{id, nil};
@@ -40,7 +44,6 @@ type Entries = std::collections::BTreeMap<u64, Item>;
 
 struct Item {
     value: String,
-    created_at: Instant,
     accessed_at: Instant,
     access_counter: u32,
     tags: Option<HashSet<String>>,
@@ -57,6 +60,7 @@ enum CommandParseError {
 #[derive(Debug)]
 enum Command {
     Add(String),
+    Del(u32),
     List,
     Show(u32),
     Set(u32),
@@ -67,8 +71,16 @@ enum Command {
 }
 
 enum Message {
-    Insert(String),
-    Call(Command),
+    Sync(String),
+    CmdLine(Command, io::Stdout),
+    Net(Command, TcpStream),
+}
+
+enum Response {
+    Data(String),
+    NewItem(String),
+    Ok,
+    Stop,
 }
 
 impl FromStr for Command {
@@ -85,7 +97,7 @@ impl FromStr for Command {
         match cmd {
             "list" => Ok(Command::List),
             "quit" => Ok(Command::Quit),
-            "add" | "show" | "set" | "load" if parts.is_empty() => {
+            "add" | "show" | "set" | "load" | "del" if parts.is_empty() => {
                 Err(CommandParseError::InsufficientArgs)
             }
             "add" => {
@@ -102,6 +114,13 @@ impl FromStr for Command {
             "set" => {
                 if let Ok(arg) = parts[0].parse() {
                     Ok(Command::Set(arg))
+                } else {
+                    Err(CommandParseError::InvalidArgType(parts[0].to_owned()))
+                }
+            }
+            "del" => {
+                if let Ok(arg) = parts[0].parse() {
+                    Ok(Command::Del(arg))
                 } else {
                     Err(CommandParseError::InvalidArgType(parts[0].to_owned()))
                 }
@@ -123,29 +142,71 @@ impl FromStr for Command {
         }
     }
 }
+fn _format_item(item: &Item, short: bool) -> String {
+    let val = if short {
+        shorten(&item.value)
+    } else {
+        item.value.clone()
+    };
 
-fn dump_entries(entries: &Entries) {
+    let tags = match &item.tags {
+        Some(tags) => tags
+            .iter()
+            .map(|v| v.as_str())
+            .collect::<Vec<&str>>()
+            .join(","),
+        None => "".to_string(),
+    };
+
+    format!("{:?} tags: {{{}}}", val, tags)
+}
+
+fn _entries_to_vec(entries: &Entries) -> Vec<&Item> {
     let mut items: Vec<&Item> = entries.values().collect();
 
     items.sort_by_key(|i| i.accessed_at);
     items.reverse();
+    items
+}
 
-    items.iter().enumerate().for_each(|(idx, item)| {
-        println!("{:?}: {:?} tags:{:?}", idx, shorten(&item.value), item.tags)
-    });
+fn dump_entries(entries: &Entries) -> String {
+    let items = _entries_to_vec(entries);
+
+    items
+        .iter()
+        .enumerate()
+        .map(|(idx, item)| format!("{:?}: {}", idx, _format_item(item, true)))
+        .collect::<Vec<String>>()
+        .join("\n")
 }
 
 fn get_entry_value(idx: u32, entries: &Entries) -> Option<String> {
-    let mut items: Vec<&Item> = entries.values().collect();
-
-    items.sort_by_key(|i| i.accessed_at);
-    items.reverse();
+    let items = _entries_to_vec(entries);
 
     items
         .iter()
         .enumerate()
         .find(|(i, _item)| idx == (*i).try_into().unwrap())
         .map(|(_, item)| item.value.clone())
+}
+
+fn show_entry(idx: u32, entries: &Entries) -> Option<String> {
+    let items = _entries_to_vec(entries);
+
+    items
+        .iter()
+        .enumerate()
+        .find(|(i, _item)| idx == (*i).try_into().unwrap())
+        .map(|(_, item)| format!("{:?}: {}", idx, _format_item(item, false)))
+}
+
+fn del_entry(idx: u32, entries: &mut Entries) -> Option<Item> {
+    if let Some(value) = get_entry_value(idx, entries) {
+        let hash = calculate_hash(value);
+        entries.remove(&hash)
+    } else {
+        None
+    }
 }
 
 fn get_entry(idx: u32, entries: &mut Entries) -> Option<&mut Item> {
@@ -157,30 +218,14 @@ fn get_entry(idx: u32, entries: &mut Entries) -> Option<&mut Item> {
     }
 }
 
-fn show_entry(idx: u32, entries: &Entries) {
-    let mut items: Vec<&Item> = entries.values().collect();
-
-    items.sort_by_key(|i| i.accessed_at);
-    items.reverse();
-
-    match items
-        .iter()
-        .enumerate()
-        .find(|(i, _item)| idx == (*i).try_into().unwrap())
-    {
-        Some((_, item)) => println!("{:?}: {:?} tags: {:?}", idx, &item.value, item.tags),
-        None => println!("item at {:?} not found", idx),
-    }
-}
-
 fn shorten(s: &String) -> String {
-    if s.len() > 64 {
-        let mut res = s.clone();
+    let mut res = s.clone();
+
+    if res.len() > 64 {
         res.replace_range(16..(s.len() - 16), "...");
-        res
-    } else {
-        s.clone()
     }
+
+    res
 }
 
 async fn sync_loop(sender: Sender<Message>) {
@@ -198,11 +243,11 @@ async fn sync_loop(sender: Sender<Message>) {
         }
 
         last_hash = hash;
-        sender.send(Message::Insert(val)).await.unwrap();
+        sender.send(Message::Sync(val)).await.unwrap();
     }
 }
 
-async fn cmd_loop(sender: Sender<Message>) {
+async fn cmdline_loop(sender: Sender<Message>) {
     let mut rl = Editor::<()>::new();
     loop {
         let readline = rl.readline(":> ");
@@ -217,87 +262,150 @@ async fn cmd_loop(sender: Sender<Message>) {
             }
             Err(_) => Command::Quit,
         };
-        sender.send(Message::Call(cmd)).await.unwrap();
+        sender
+            .send(Message::CmdLine(cmd, io::stdout()))
+            .await
+            .unwrap();
     }
 }
 
-async fn net_loop(_sender: Sender<Message>) {
-    loop {
-        task::sleep(Duration::from_secs(1)).await;
-        println!("net-loop is sleeping...")
+async fn net_loop(sender: Sender<Message>) -> Result<()> {
+    let listener = TcpListener::bind("127.0.0.1:8931").await?;
+
+    println!("listening on {}", listener.local_addr()?);
+
+    let mut incoming = listener.incoming();
+
+    while let Some(stream) = incoming.next().await {
+        let stream = stream?;
+        let sender = sender.clone();
+        task::spawn(async { process(stream, sender).await.unwrap() });
     }
+
+    Ok(())
 }
 
-async fn main_loop(receiver: Receiver<Message>) {
+async fn process(stream: TcpStream, sender: Sender<Message>) -> Result<()> {
+    let mut reader = stream.clone();
+
+    let mut buf = String::new();
+    reader.read_to_string(&mut buf).await?;
+
+    let cmd = match buf.trim().parse::<Command>() {
+        Err(CommandParseError::EmptyCommand) => Command::Quit,
+        Ok(cmd) => cmd,
+        Err(err) => Command::Invalid(err),
+    };
+
+    sender
+        .send(Message::Net(cmd, stream.clone()))
+        .await
+        .unwrap();
+
+    Ok(())
+}
+
+// TODO: how to use generics?
+
+async fn write_response(
+    stream: &mut (impl io::WriteExt + std::marker::Unpin),
+    response: &Response,
+) -> Result<()> {
+    if let Response::Data(val) = response {
+        stream.write_all(val.as_bytes()).await?;
+        stream.write(b"\n").await?;
+    }
+    Ok(())
+}
+
+async fn main_loop(receiver: Receiver<Message>) -> Result<()> {
     let mut entries = Entries::new();
 
     loop {
         if let Ok(msg) = receiver.recv().await {
-            match msg {
-                Message::Insert(value) => handle_insert(value, &mut entries),
-                Message::Call(cmd) => {
-                    if !handle_call(cmd, &mut entries) {
-                        return;
-                    }
+            let response = match msg {
+                Message::Sync(value) => handle_insert(value, &mut entries),
+                Message::CmdLine(cmd, mut stream) => {
+                    let rep = handle_call(cmd, &mut entries);
+                    write_response(&mut stream, &rep).await?;
+                    rep
+                }
+                Message::Net(cmd, mut stream) => {
+                    let rep = handle_call(cmd, &mut entries);
+                    write_response(&mut stream, &rep).await?;
+                    rep
                 }
             };
+
+            match response {
+                Response::Stop => return Ok(()),
+                Response::Ok | Response::NewItem(_) | Response::Data(_) => continue,
+            }
         }
     }
 }
 
-fn handle_insert(s: String, entries: &mut Entries) {
+fn handle_insert(s: String, entries: &mut Entries) -> Response {
     let hash = calculate_hash(&s);
 
     match entries.get_mut(&hash) {
         Some(item) => {
             item.accessed_at = Instant::now();
             item.access_counter += 1;
+            Response::Ok
         }
         None => {
             let now = Instant::now();
             entries.insert(
                 hash,
                 Item {
-                    value: s,
-                    created_at: now,
+                    value: s.clone(),
                     accessed_at: now,
                     access_counter: 1,
                     tags: None,
                 },
             );
+            Response::NewItem(s)
         }
-    };
+    }
 }
 
-fn handle_call(cmd: Command, entries: &mut Entries) -> bool {
+fn handle_call(cmd: Command, entries: &mut Entries) -> Response {
     match cmd {
-        Command::Quit => false,
-        Command::List => {
-            dump_entries(entries);
-            true
-        }
+        Command::Quit => Response::Stop,
+        Command::List => Response::Data(dump_entries(entries)),
         Command::Show(idx) => {
-            show_entry(idx, entries);
-            true
+            let result = match show_entry(idx, entries) {
+                Some(val) => val,
+                None => format!("item at {:?} not found", idx),
+            };
+            Response::Data(result)
         }
         Command::Add(value) => {
             unsafe { set_current_entry(value) };
-            true
+            Response::Ok
         }
         Command::Load(filename) => {
             let mut file = File::open(filename).unwrap();
             let mut buffer = String::new();
             file.read_to_string(&mut buffer).unwrap();
             unsafe { set_current_entry(buffer) };
-            true
+            Response::Ok
         }
         Command::Set(idx) => {
             if let Some(value) = get_entry_value(idx, entries) {
-                unsafe { set_current_entry(value) }
+                unsafe { set_current_entry(value) };
+                Response::Ok
             } else {
-                println!("item at {:?} not found", idx)
+                Response::Data(format!("item at {:?} not found", idx))
             }
-            true
+        }
+        Command::Del(idx) => {
+            if del_entry(idx, entries).is_none() {
+                Response::Data(format!("item at {:?} not found", idx))
+            } else {
+                Response::Ok
+            }
         }
         Command::Tag(idx, tag) => {
             if let Some(mut item) = get_entry(idx, entries) {
@@ -309,22 +417,20 @@ fn handle_call(cmd: Command, entries: &mut Entries) -> bool {
                     let tags = item.tags.as_mut().unwrap();
                     tags.insert(tag);
                 }
+                Response::Ok
             } else {
-                println!("item at {:?} not found", idx)
+                Response::Data(format!("item at {:?} not found", idx))
             }
-            true
         }
-        Command::Invalid(e) => {
-            println!("error: {:?}", e);
-            true
-        }
+        Command::Invalid(e) => Response::Data(format!("error: {:?}", e)),
     }
 }
 
-fn main() {
+fn main() -> Result<()> {
     let (sender, receiver) = bounded::<Message>(1);
     task::spawn(sync_loop(sender.clone()));
     task::spawn(net_loop(sender.clone()));
-    task::spawn(cmd_loop(sender));
-    task::block_on(main_loop(receiver));
+    task::spawn(cmdline_loop(sender));
+    task::block_on(main_loop(receiver))?;
+    Ok(())
 }
