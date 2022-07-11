@@ -1,4 +1,3 @@
-use anyhow::Result;
 use async_std::channel::{bounded, Receiver, Sender};
 use async_std::io;
 use async_std::net::{TcpListener, TcpStream};
@@ -9,12 +8,14 @@ use cocoa::base::{id, nil};
 use cocoa::foundation::NSString;
 use rustyline::Editor;
 use std::collections::hash_map::DefaultHasher;
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::io::prelude::*;
-use std::str::FromStr;
 use std::time::{Duration, Instant};
+
+mod common;
+use common::{Command, CommandParseError, Response, HEADER_LEN};
 
 unsafe fn nsstring_to_slice(s: &id) -> &str {
     let bytes = s.UTF8String() as *const u8;
@@ -49,99 +50,12 @@ struct Item {
     tags: Option<HashSet<String>>,
 }
 
-#[derive(Debug)]
-enum CommandParseError {
-    EmptyCommand,
-    InvalidCommand(String),
-    InsufficientArgs,
-    InvalidArgType(String),
-}
-
-#[derive(Debug)]
-enum Command {
-    Add(String),
-    Del(u32),
-    List,
-    Show(u32),
-    Set(u32),
-    Load(String),
-    Tag(u32, String),
-    Quit,
-    Invalid(CommandParseError),
-}
-
 enum Message {
     Sync(String),
     CmdLine(Command, io::Stdout),
     Net(Command, TcpStream),
 }
 
-enum Response {
-    Data(String),
-    NewItem(String),
-    Ok,
-    Stop,
-}
-
-impl FromStr for Command {
-    type Err = CommandParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut parts: VecDeque<&str> = s.split(' ').collect();
-
-        let cmd = parts.pop_front().unwrap();
-        if cmd.is_empty() {
-            return Err(CommandParseError::EmptyCommand);
-        }
-
-        match cmd {
-            "list" => Ok(Command::List),
-            "quit" => Ok(Command::Quit),
-            "add" | "show" | "set" | "load" | "del" if parts.is_empty() => {
-                Err(CommandParseError::InsufficientArgs)
-            }
-            "add" => {
-                let args = parts.make_contiguous().join(" ");
-                Ok(Command::Add(args))
-            }
-            "show" => {
-                if let Ok(arg) = parts[0].parse() {
-                    Ok(Command::Show(arg))
-                } else {
-                    Err(CommandParseError::InvalidArgType(parts[0].to_owned()))
-                }
-            }
-            "set" => {
-                if let Ok(arg) = parts[0].parse() {
-                    Ok(Command::Set(arg))
-                } else {
-                    Err(CommandParseError::InvalidArgType(parts[0].to_owned()))
-                }
-            }
-            "del" => {
-                if let Ok(arg) = parts[0].parse() {
-                    Ok(Command::Del(arg))
-                } else {
-                    Err(CommandParseError::InvalidArgType(parts[0].to_owned()))
-                }
-            }
-            "load" => {
-                let filename = parts[0].to_owned();
-                Ok(Command::Load(filename))
-            }
-            "tag" if parts.len() < 2 => Err(CommandParseError::InsufficientArgs),
-            "tag" => {
-                if let Ok(idx) = parts[0].parse() {
-                    let tag = parts[1].to_owned();
-                    Ok(Command::Tag(idx, tag))
-                } else {
-                    Err(CommandParseError::InvalidArgType(parts[0].to_owned()))
-                }
-            }
-            _ => Err(CommandParseError::InvalidCommand(cmd.to_owned())),
-        }
-    }
-}
 fn _format_item(item: &Item, short: bool) -> String {
     let val = if short {
         shorten(&item.value)
@@ -269,7 +183,7 @@ async fn cmdline_loop(sender: Sender<Message>) {
     }
 }
 
-async fn net_loop(sender: Sender<Message>) -> Result<()> {
+async fn net_loop(sender: Sender<Message>) -> io::Result<()> {
     let listener = TcpListener::bind("127.0.0.1:8931").await?;
 
     println!("listening on {}", listener.local_addr()?);
@@ -285,13 +199,24 @@ async fn net_loop(sender: Sender<Message>) -> Result<()> {
     Ok(())
 }
 
-async fn process(stream: TcpStream, sender: Sender<Message>) -> Result<()> {
+async fn process(stream: TcpStream, sender: Sender<Message>) -> io::Result<()> {
     let mut reader = stream.clone();
 
-    let mut buf = String::new();
-    reader.read_to_string(&mut buf).await?;
+    let mut header: [u8; HEADER_LEN] = [0; HEADER_LEN];
+    reader.read_exact(&mut header).await?;
 
-    let cmd = match buf.trim().parse::<Command>() {
+    let buf_len = usize::from_le_bytes(header);
+
+    println!("header = {:?}, payload-len: {:?}", header, buf_len);
+
+    let mut buf = vec![0; buf_len];
+    reader.read_exact(&mut buf).await?;
+
+    println!("got data: {:?}", buf);
+
+    let cmd_payload = String::from_utf8_lossy(buf.as_slice());
+
+    let cmd = match cmd_payload.parse::<Command>() {
         Err(CommandParseError::EmptyCommand) => Command::Quit,
         Ok(cmd) => cmd,
         Err(err) => Command::Invalid(err),
@@ -305,12 +230,10 @@ async fn process(stream: TcpStream, sender: Sender<Message>) -> Result<()> {
     Ok(())
 }
 
-// TODO: how to use generics?
-
 async fn write_response(
     stream: &mut (impl io::WriteExt + std::marker::Unpin),
     response: &Response,
-) -> Result<()> {
+) -> io::Result<()> {
     if let Response::Data(val) = response {
         stream.write_all(val.as_bytes()).await?;
         stream.write(b"\n").await?;
@@ -318,7 +241,7 @@ async fn write_response(
     Ok(())
 }
 
-async fn main_loop(receiver: Receiver<Message>) -> Result<()> {
+async fn main_loop(receiver: Receiver<Message>) -> io::Result<()> {
     let mut entries = Entries::new();
 
     loop {
@@ -426,7 +349,7 @@ fn handle_call(cmd: Command, entries: &mut Entries) -> Response {
     }
 }
 
-fn main() -> Result<()> {
+fn main() -> io::Result<()> {
     let (sender, receiver) = bounded::<Message>(1);
     task::spawn(sync_loop(sender.clone()));
     task::spawn(net_loop(sender.clone()));

@@ -1,5 +1,5 @@
 [package]
-name = "clipr"
+name = "cliprd"
 version = "0.1.0"
 edition = "2021"
 
@@ -11,4 +11,11 @@ async-std = "1.12.0"
 cocoa = { version = "0.24.0" }
 objc = "0.2.3"
 rustyline = "9.1.0"
+thiserror = "1.0.31"
 # fasthash = "0.4"
+
+[[bin]]
+name = "cliprd"
+
+[[bin]]
+name = "clipr"
