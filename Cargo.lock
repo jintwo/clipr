@@ -183,7 +183,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "clipr"
+name = "cliprd"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -191,6 +191,7 @@ dependencies = [
  "cocoa",
  "objc",
  "rustyline",
+ "thiserror",
 ]
 
 [[package]]
