@@ -1,6 +1,6 @@
 use async_std::channel::{bounded, Receiver, Sender};
 use async_std::io;
-use async_std::net::{TcpListener, TcpStream};
+use async_std::net::TcpListener;
 use async_std::prelude::*;
 use async_std::task;
 use cocoa::appkit::{NSPasteboard, NSPasteboardTypeString};
@@ -15,7 +15,7 @@ use std::io::prelude::*;
 use std::time::{Duration, Instant};
 
 mod common;
-use common::{Command, CommandParseError, Response, HEADER_LEN};
+use common::{read_command, Command, CommandParseError, Request, Response};
 
 unsafe fn nsstring_to_slice(s: &id) -> &str {
     let bytes = s.UTF8String() as *const u8;
@@ -48,12 +48,6 @@ struct Item {
     accessed_at: Instant,
     access_counter: u32,
     tags: Option<HashSet<String>>,
-}
-
-enum Message {
-    Sync(String),
-    CmdLine(Command, io::Stdout),
-    Net(Command, TcpStream),
 }
 
 fn _format_item(item: &Item, short: bool) -> String {
@@ -142,7 +136,7 @@ fn shorten(s: &String) -> String {
     res
 }
 
-async fn sync_loop(sender: Sender<Message>) {
+async fn sync_loop(sender: Sender<Request>) {
     let mut last_hash: u64 = 0;
     loop {
         task::sleep(Duration::from_millis(500)).await;
@@ -157,11 +151,11 @@ async fn sync_loop(sender: Sender<Message>) {
         }
 
         last_hash = hash;
-        sender.send(Message::Sync(val)).await.unwrap();
+        sender.send(Request::Sync(val)).await.unwrap();
     }
 }
 
-async fn cmdline_loop(sender: Sender<Message>) {
+async fn cmdline_loop(sender: Sender<Request>) {
     let mut rl = Editor::<()>::new();
     loop {
         let readline = rl.readline(":> ");
@@ -177,13 +171,13 @@ async fn cmdline_loop(sender: Sender<Message>) {
             Err(_) => Command::Quit,
         };
         sender
-            .send(Message::CmdLine(cmd, io::stdout()))
+            .send(Request::CmdLine(cmd, io::stdout()))
             .await
             .unwrap();
     }
 }
 
-async fn net_loop(sender: Sender<Message>) -> io::Result<()> {
+async fn net_loop(sender: Sender<Request>) -> io::Result<()> {
     let listener = TcpListener::bind("127.0.0.1:8931").await?;
 
     println!("listening on {}", listener.local_addr()?);
@@ -193,45 +187,19 @@ async fn net_loop(sender: Sender<Message>) -> io::Result<()> {
     while let Some(stream) = incoming.next().await {
         let stream = stream?;
         let sender = sender.clone();
-        task::spawn(async { process(stream, sender).await.unwrap() });
+        task::spawn(async move {
+            let command = read_command(&stream).await?;
+            let request = Request::Net(command, stream);
+            sender.send(request).await.unwrap();
+            Ok::<(), std::io::Error>(())
+        });
     }
 
     Ok(())
 }
 
-async fn process(stream: TcpStream, sender: Sender<Message>) -> io::Result<()> {
-    let mut reader = stream.clone();
-
-    let mut header: [u8; HEADER_LEN] = [0; HEADER_LEN];
-    reader.read_exact(&mut header).await?;
-
-    let buf_len = usize::from_le_bytes(header);
-
-    println!("header = {:?}, payload-len: {:?}", header, buf_len);
-
-    let mut buf = vec![0; buf_len];
-    reader.read_exact(&mut buf).await?;
-
-    println!("got data: {:?}", buf);
-
-    let cmd_payload = String::from_utf8_lossy(buf.as_slice());
-
-    let cmd = match cmd_payload.parse::<Command>() {
-        Err(CommandParseError::EmptyCommand) => Command::Quit,
-        Ok(cmd) => cmd,
-        Err(err) => Command::Invalid(err),
-    };
-
-    sender
-        .send(Message::Net(cmd, stream.clone()))
-        .await
-        .unwrap();
-
-    Ok(())
-}
-
-async fn write_response(
-    stream: &mut (impl io::WriteExt + std::marker::Unpin),
+async fn write_response<W: io::WriteExt + std::marker::Unpin>(
+    stream: &mut W,
     response: &Response,
 ) -> io::Result<()> {
     if let Response::Data(val) = response {
@@ -241,19 +209,19 @@ async fn write_response(
     Ok(())
 }
 
-async fn main_loop(receiver: Receiver<Message>) -> io::Result<()> {
+async fn main_loop(receiver: Receiver<Request>) -> io::Result<()> {
     let mut entries = Entries::new();
 
     loop {
         if let Ok(msg) = receiver.recv().await {
             let response = match msg {
-                Message::Sync(value) => handle_insert(value, &mut entries),
-                Message::CmdLine(cmd, mut stream) => {
+                Request::Sync(value) => handle_insert(value, &mut entries),
+                Request::CmdLine(cmd, mut stream) => {
                     let rep = handle_call(cmd, &mut entries);
                     write_response(&mut stream, &rep).await?;
                     rep
                 }
-                Message::Net(cmd, mut stream) => {
+                Request::Net(cmd, mut stream) => {
                     let rep = handle_call(cmd, &mut entries);
                     write_response(&mut stream, &rep).await?;
                     rep
@@ -350,7 +318,7 @@ fn handle_call(cmd: Command, entries: &mut Entries) -> Response {
 }
 
 fn main() -> io::Result<()> {
-    let (sender, receiver) = bounded::<Message>(1);
+    let (sender, receiver) = bounded::<Request>(1);
     task::spawn(sync_loop(sender.clone()));
     task::spawn(net_loop(sender.clone()));
     task::spawn(cmdline_loop(sender));

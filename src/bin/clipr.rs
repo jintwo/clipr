@@ -1,5 +1,5 @@
 use async_std::{io, net::TcpStream, prelude::*, task};
-use cliprd::common::{Command, CommandParseError, Response, HEADER_LEN};
+use cliprd::common::{write_command, Command, CommandParseError, Response};
 use std::env;
 
 async fn call(cmd: Command) -> io::Result<Response> {
@@ -7,14 +7,7 @@ async fn call(cmd: Command) -> io::Result<Response> {
 
     let mut stream = TcpStream::connect("127.0.0.1:8931").await?;
 
-    let cmd_payload: Vec<u8> = cmd.into();
-    let cmd_header = &cmd_payload.len().to_le_bytes()[0..HEADER_LEN];
-
-    println!("header = {:?}, payload = {:?}", cmd_header, cmd_payload);
-
-    stream.write_all(cmd_header).await?;
-    stream.write_all(cmd_payload.as_slice()).await?;
-    stream.flush().await?;
+    write_command(&mut stream, cmd).await?;
 
     let mut buf = String::new();
     stream.read_to_string(&mut buf).await?;
@@ -38,6 +31,7 @@ fn show_response(response: &Response) {
         _ => println!("..."),
     }
 }
+
 fn main() -> io::Result<()> {
     match parse_cmd() {
         Ok(cmd) => match task::block_on(call(cmd)) {
