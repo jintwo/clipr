@@ -42,7 +42,7 @@ pub enum Command {
     Add(String),
     Del(u32),
     List,
-    Show(u32),
+    Get(u32),
     Set(u32),
     Load(String),
     Tag(u32, String),
@@ -66,16 +66,16 @@ impl FromStr for Command {
             "list" => Ok(Command::List),
             "help" => Ok(Command::Help),
             "quit" => Ok(Command::Quit),
-            "add" | "show" | "set" | "load" | "del" if parts.is_empty() => {
+            "add" | "get" | "set" | "load" | "del" if parts.is_empty() => {
                 Err(CommandParseError::InsufficientArgs)
             }
             "add" => {
                 let args = parts.make_contiguous().join(" ");
                 Ok(Command::Add(args))
             }
-            "show" => {
+            "get" => {
                 if let Ok(arg) = parts[0].parse() {
-                    Ok(Command::Show(arg))
+                    Ok(Command::Get(arg))
                 } else {
                     Err(CommandParseError::InvalidArgType(parts[0].to_owned()))
                 }
@@ -122,7 +122,7 @@ impl From<Command> for Vec<u8> {
             Command::Del(i) => format!("del {}", i),
             Command::Set(i) => format!("set {}", i),
             Command::Tag(i, v) => format!("tag {} {}", i, v),
-            Command::Show(i) => format!("show {}", i),
+            Command::Get(i) => format!("get {}", i),
             Command::Load(v) => format!("load {}", v),
         };
 
@@ -140,7 +140,7 @@ impl From<&Command> for Vec<u8> {
             Command::Del(i) => format!("del {}", i),
             Command::Set(i) => format!("set {}", i),
             Command::Tag(i, v) => format!("tag {} {}", i, v),
-            Command::Show(i) => format!("show {}", i),
+            Command::Get(i) => format!("get {}", i),
             Command::Load(v) => format!("load {}", v),
         };
 
@@ -189,6 +189,7 @@ pub async fn write_command(stream: &mut TcpStream, cmd: Command) -> io::Result<(
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
+    pub interactive: Option<bool>,
     pub host: Option<String>,
     pub port: Option<u16>,
 }
@@ -198,6 +199,7 @@ impl Default for Config {
         Config {
             host: Some(String::from("127.0.0.1")),
             port: Some(8931),
+            interactive: Some(true),
         }
     }
 }

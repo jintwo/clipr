@@ -40,15 +40,12 @@ fn show_response(response: &Response) {
 fn main() -> io::Result<()> {
     let args = env::args();
     let config = Arc::new(if args.len() < 2 {
-        println!("using default config...");
         Config::default()
     } else {
         let config_filename = args.skip(1).nth(0).unwrap();
         let config = load_config(config_filename.as_str())?;
         config
     });
-
-    println!("using config = {:?}", config);
 
     match parse_cmd() {
         Ok(cmd) => match task::block_on(call(config, cmd)) {

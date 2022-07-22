@@ -100,16 +100,6 @@ fn get_entry_value(idx: u32, entries: &Entries) -> Option<String> {
         .map(|(_, item)| item.value.clone())
 }
 
-fn show_entry(idx: u32, entries: &Entries) -> Option<String> {
-    let items = _entries_to_vec(entries);
-
-    items
-        .iter()
-        .enumerate()
-        .find(|(i, _item)| idx == (*i).try_into().unwrap())
-        .map(|(_, item)| format!("{:?}: {}", idx, _format_item(item, false)))
-}
-
 fn del_entry(idx: u32, entries: &mut Entries) -> Option<Item> {
     if let Some(value) = get_entry_value(idx, entries) {
         let hash = calculate_hash(value);
@@ -138,7 +128,7 @@ fn shorten(s: &String) -> String {
     res
 }
 
-async fn sync_loop(config: Arc<Config>, sender: Sender<Request>) {
+async fn sync_loop(_config: Arc<Config>, sender: Sender<Request>) {
     let mut last_hash: u64 = 0;
     loop {
         task::sleep(Duration::from_millis(500)).await;
@@ -157,7 +147,7 @@ async fn sync_loop(config: Arc<Config>, sender: Sender<Request>) {
     }
 }
 
-async fn cmdline_loop(config: Arc<Config>, sender: Sender<Request>) {
+async fn repl_loop(_config: Arc<Config>, sender: Sender<Request>) {
     let mut rl = Editor::<()>::new();
     loop {
         let readline = rl.readline(":> ");
@@ -179,6 +169,29 @@ async fn cmdline_loop(config: Arc<Config>, sender: Sender<Request>) {
     }
 }
 
+async fn empty_fg_loop(_config: Arc<Config>, sender: Sender<Request>) {
+    let mut rl = Editor::<()>::new();
+    loop {
+        let readline = rl.readline("");
+        let cmd = match readline {
+            Ok(_) => continue,
+            Err(_) => Command::Quit,
+        };
+        sender
+            .send(Request::CmdLine(cmd, io::stdout()))
+            .await
+            .unwrap();
+    }
+}
+
+async fn cmdline_loop(config: Arc<Config>, sender: Sender<Request>) {
+    if !config.interactive.unwrap_or(false) {
+        empty_fg_loop(config, sender).await;
+    } else {
+        repl_loop(config, sender).await;
+    };
+}
+
 async fn net_loop(config: Arc<Config>, sender: Sender<Request>) -> io::Result<()> {
     let listen_on = format!(
         "{}:{}",
@@ -186,8 +199,6 @@ async fn net_loop(config: Arc<Config>, sender: Sender<Request>) -> io::Result<()
         &config.port.unwrap()
     );
     let listener = TcpListener::bind(listen_on).await?;
-
-    println!("listening on {}", listener.local_addr()?);
 
     let mut incoming = listener.incoming();
 
@@ -216,7 +227,7 @@ async fn write_response<W: io::WriteExt + std::marker::Unpin>(
     Ok(())
 }
 
-async fn main_loop(config: Arc<Config>, receiver: Receiver<Request>) -> io::Result<()> {
+async fn main_loop(_config: Arc<Config>, receiver: Receiver<Request>) -> io::Result<()> {
     let mut entries = Entries::new();
 
     loop {
@@ -277,8 +288,8 @@ fn handle_call(cmd: Command, entries: &mut Entries) -> Response {
         Command::Quit => Response::Stop,
         Command::Help => Response::Data(show_help()),
         Command::List => Response::Data(dump_entries(entries)),
-        Command::Show(idx) => {
-            let result = match show_entry(idx, entries) {
+        Command::Get(idx) => {
+            let result = match get_entry_value(idx, entries) {
                 Some(val) => val,
                 None => format!("item at {:?} not found", idx),
             };
@@ -332,15 +343,12 @@ fn handle_call(cmd: Command, entries: &mut Entries) -> Response {
 fn main() -> io::Result<()> {
     let args = env::args();
     let config = Arc::new(if args.len() < 2 {
-        println!("using default config...");
         Config::default()
     } else {
         let config_filename = args.skip(1).nth(0).unwrap();
         let config = load_config(config_filename.as_str())?;
         config
     });
-
-    println!("using config = {:?}", config);
 
     let (sender, receiver) = bounded::<Request>(1);
     task::spawn(sync_loop(config.clone(), sender.clone()));
