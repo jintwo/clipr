@@ -12,6 +12,7 @@ cocoa = { version = "0.24.0" }
 objc = "0.2.3"
 rustyline = "9.1.0"
 serde = { version = "1.0.139", features = ["derive"] }
+serde_derive = "1.0.140"
 thiserror = "1.0.31"
 toml = "0.5.9"
 # fasthash = "0.4"

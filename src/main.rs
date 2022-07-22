@@ -9,13 +9,15 @@ use cocoa::foundation::NSString;
 use rustyline::Editor;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
+use std::env;
 use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::io::prelude::*;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 mod common;
-use common::{read_command, Command, CommandParseError, Request, Response};
+use common::{load_config, read_command, Command, CommandParseError, Config, Request, Response};
 
 unsafe fn nsstring_to_slice(s: &id) -> &str {
     let bytes = s.UTF8String() as *const u8;
@@ -136,7 +138,7 @@ fn shorten(s: &String) -> String {
     res
 }
 
-async fn sync_loop(sender: Sender<Request>) {
+async fn sync_loop(config: Arc<Config>, sender: Sender<Request>) {
     let mut last_hash: u64 = 0;
     loop {
         task::sleep(Duration::from_millis(500)).await;
@@ -155,7 +157,7 @@ async fn sync_loop(sender: Sender<Request>) {
     }
 }
 
-async fn cmdline_loop(sender: Sender<Request>) {
+async fn cmdline_loop(config: Arc<Config>, sender: Sender<Request>) {
     let mut rl = Editor::<()>::new();
     loop {
         let readline = rl.readline(":> ");
@@ -177,8 +179,13 @@ async fn cmdline_loop(sender: Sender<Request>) {
     }
 }
 
-async fn net_loop(sender: Sender<Request>) -> io::Result<()> {
-    let listener = TcpListener::bind("127.0.0.1:8931").await?;
+async fn net_loop(config: Arc<Config>, sender: Sender<Request>) -> io::Result<()> {
+    let listen_on = format!(
+        "{}:{}",
+        &config.host.as_ref().unwrap(),
+        &config.port.unwrap()
+    );
+    let listener = TcpListener::bind(listen_on).await?;
 
     println!("listening on {}", listener.local_addr()?);
 
@@ -209,7 +216,7 @@ async fn write_response<W: io::WriteExt + std::marker::Unpin>(
     Ok(())
 }
 
-async fn main_loop(receiver: Receiver<Request>) -> io::Result<()> {
+async fn main_loop(config: Arc<Config>, receiver: Receiver<Request>) -> io::Result<()> {
     let mut entries = Entries::new();
 
     loop {
@@ -261,9 +268,14 @@ fn handle_insert(s: String, entries: &mut Entries) -> Response {
     }
 }
 
+fn show_help() -> String {
+    "available commands...".to_string()
+}
+
 fn handle_call(cmd: Command, entries: &mut Entries) -> Response {
     match cmd {
         Command::Quit => Response::Stop,
+        Command::Help => Response::Data(show_help()),
         Command::List => Response::Data(dump_entries(entries)),
         Command::Show(idx) => {
             let result = match show_entry(idx, entries) {
@@ -318,10 +330,22 @@ fn handle_call(cmd: Command, entries: &mut Entries) -> Response {
 }
 
 fn main() -> io::Result<()> {
+    let args = env::args();
+    let config = Arc::new(if args.len() < 2 {
+        println!("using default config...");
+        Config::default()
+    } else {
+        let config_filename = args.skip(1).nth(0).unwrap();
+        let config = load_config(config_filename.as_str())?;
+        config
+    });
+
+    println!("using config = {:?}", config);
+
     let (sender, receiver) = bounded::<Request>(1);
-    task::spawn(sync_loop(sender.clone()));
-    task::spawn(net_loop(sender.clone()));
-    task::spawn(cmdline_loop(sender));
-    task::block_on(main_loop(receiver))?;
+    task::spawn(sync_loop(config.clone(), sender.clone()));
+    task::spawn(net_loop(config.clone(), sender.clone()));
+    task::spawn(cmdline_loop(config.clone(), sender));
+    task::block_on(main_loop(config.clone(), receiver))?;
     Ok(())
 }

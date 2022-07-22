@@ -1,8 +1,10 @@
 use async_std::io;
 use async_std::net::TcpStream;
 use async_std::prelude::*;
-use serde::{Deserialize, Serialize};
+use serde_derive::Deserialize;
 use std::collections::VecDeque;
+use std::fs::File;
+use std::io::prelude::*;
 use std::str::FromStr;
 use thiserror::Error;
 
@@ -46,6 +48,7 @@ pub enum Command {
     Tag(u32, String),
     Quit,
     Invalid(CommandParseError),
+    Help,
 }
 
 impl FromStr for Command {
@@ -61,6 +64,7 @@ impl FromStr for Command {
 
         match cmd {
             "list" => Ok(Command::List),
+            "help" => Ok(Command::Help),
             "quit" => Ok(Command::Quit),
             "add" | "show" | "set" | "load" | "del" if parts.is_empty() => {
                 Err(CommandParseError::InsufficientArgs)
@@ -112,6 +116,7 @@ impl From<Command> for Vec<u8> {
     fn from(cmd: Command) -> Self {
         let s = match cmd {
             Command::List | Command::Invalid(_) => "list".to_string(),
+            Command::Help => "help".to_string(),
             Command::Quit => "quit".to_string(),
             Command::Add(v) => format!("add {}", v),
             Command::Del(i) => format!("del {}", i),
@@ -129,6 +134,7 @@ impl From<&Command> for Vec<u8> {
     fn from(cmd: &Command) -> Self {
         let s = match cmd {
             Command::List | Command::Invalid(_) => "list".to_string(),
+            Command::Help => "help".to_string(),
             Command::Quit => "quit".to_string(),
             Command::Add(v) => format!("add {}", v),
             Command::Del(i) => format!("del {}", i),
@@ -153,10 +159,10 @@ pub async fn read_command(stream: &TcpStream) -> io::Result<Command> {
     // read payload
     let mut buf = vec![0u8; buf_len];
     reader.read_exact(&mut buf).await?;
-    let cmd_payload = String::from_utf8_lossy(&buf[..]);
+    let payload = String::from_utf8_lossy(&buf[..]);
 
     // parse command
-    let cmd = match cmd_payload.parse::<Command>() {
+    let cmd = match payload.parse::<Command>() {
         Err(CommandParseError::EmptyCommand) => Command::Quit,
         Ok(cmd) => cmd,
         Err(err) => Command::Invalid(err),
@@ -166,17 +172,42 @@ pub async fn read_command(stream: &TcpStream) -> io::Result<Command> {
 }
 
 pub async fn write_command(stream: &mut TcpStream, cmd: Command) -> io::Result<()> {
-    let cmd_payload: Vec<u8> = cmd.into();
-    let cmd_header = &cmd_payload.len().to_le_bytes()[..HEADER_LEN];
+    // encode payload
+    let payload: Vec<u8> = cmd.into();
 
-    stream.write_all(cmd_header).await?;
-    stream.write_all(&cmd_payload[..]).await?;
+    // write header
+    let buf_len = payload.len();
+    let header = &buf_len.to_le_bytes()[..HEADER_LEN];
+    stream.write_all(header).await?;
+
+    // write payload
+    stream.write_all(&payload[..]).await?;
     stream.flush().await?;
 
     Ok(())
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct Config {
-    listen: String,
+    pub host: Option<String>,
+    pub port: Option<u16>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            host: Some(String::from("127.0.0.1")),
+            port: Some(8931),
+        }
+    }
+}
+
+pub fn load_config(filename: &str) -> io::Result<Config> {
+    let mut file = File::open(filename)?;
+    let mut buffer = String::new();
+    file.read_to_string(&mut buffer)?;
+
+    let config: Config = toml::from_str(buffer.as_str())?;
+
+    Ok(config)
 }
