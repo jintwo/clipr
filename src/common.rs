@@ -1,11 +1,11 @@
 use async_std::io;
 use async_std::net::TcpStream;
 use async_std::prelude::*;
+use clap::{Parser, Subcommand};
 use serde_derive::Deserialize;
-use std::collections::VecDeque;
 use std::fs::File;
 use std::io::prelude::*;
-use std::str::FromStr;
+use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 pub const HEADER_LEN: usize = 8;
@@ -13,6 +13,7 @@ pub const HEADER_LEN: usize = 8;
 #[derive(Debug)]
 pub enum Request {
     Sync(String),
+    Quit,
     CmdLine(Command, io::Stdout),
     Net(Command, TcpStream),
 }
@@ -37,114 +38,46 @@ pub enum CommandParseError {
     InvalidArgType(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Subcommand)]
 pub enum Command {
-    Add(String),
-    Del(u32),
+    Add { value: String },
+    Del { index: u32 },
     List,
-    Get(u32),
-    Set(u32),
-    Load(String),
-    Tag(u32, String),
-    Quit,
-    Invalid(CommandParseError),
-    Help,
+    Get { index: u32 },
+    Set { index: u32 },
+    Load { filename: String },
+    Tag { index: u32, tag: String },
 }
 
-impl FromStr for Command {
-    type Err = CommandParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut parts: VecDeque<&str> = s.split(' ').collect();
-
-        let cmd = parts.pop_front().unwrap();
-        if cmd.is_empty() {
-            return Err(CommandParseError::EmptyCommand);
-        }
-
-        match cmd {
-            "list" => Ok(Command::List),
-            "help" => Ok(Command::Help),
-            "quit" => Ok(Command::Quit),
-            "add" | "get" | "set" | "load" | "del" if parts.is_empty() => {
-                Err(CommandParseError::InsufficientArgs)
-            }
-            "add" => {
-                let args = parts.make_contiguous().join(" ");
-                Ok(Command::Add(args))
-            }
-            "get" => {
-                if let Ok(arg) = parts[0].parse() {
-                    Ok(Command::Get(arg))
-                } else {
-                    Err(CommandParseError::InvalidArgType(parts[0].to_owned()))
-                }
-            }
-            "set" => {
-                if let Ok(arg) = parts[0].parse() {
-                    Ok(Command::Set(arg))
-                } else {
-                    Err(CommandParseError::InvalidArgType(parts[0].to_owned()))
-                }
-            }
-            "del" => {
-                if let Ok(arg) = parts[0].parse() {
-                    Ok(Command::Del(arg))
-                } else {
-                    Err(CommandParseError::InvalidArgType(parts[0].to_owned()))
-                }
-            }
-            "load" => {
-                let filename = parts[0].to_owned();
-                Ok(Command::Load(filename))
-            }
-            "tag" if parts.len() < 2 => Err(CommandParseError::InsufficientArgs),
-            "tag" => {
-                if let Ok(idx) = parts[0].parse() {
-                    let tag = parts[1].to_owned();
-                    Ok(Command::Tag(idx, tag))
-                } else {
-                    Err(CommandParseError::InvalidArgType(parts[0].to_owned()))
-                }
-            }
-            _ => Err(CommandParseError::InvalidCommand(cmd.to_owned())),
-        }
+impl From<CommandParseError> for std::io::Error {
+    fn from(cpe: CommandParseError) -> Self {
+        io::Error::new(io::ErrorKind::Other, format!("{:?}", cpe))
     }
+}
+
+fn command_to_vec(cmd: &Command) -> Vec<u8> {
+    let s = match cmd {
+        Command::List => "list".to_string(),
+        Command::Add { value } => format!("add {}", value),
+        Command::Del { index } => format!("del {}", index),
+        Command::Set { index } => format!("set {}", index),
+        Command::Tag { index, tag } => format!("tag {} {}", index, tag),
+        Command::Get { index } => format!("get {}", index),
+        Command::Load { filename } => format!("load {}", filename),
+    };
+
+    s.as_bytes().to_vec()
 }
 
 impl From<Command> for Vec<u8> {
     fn from(cmd: Command) -> Self {
-        let s = match cmd {
-            Command::List | Command::Invalid(_) => "list".to_string(),
-            Command::Help => "help".to_string(),
-            Command::Quit => "quit".to_string(),
-            Command::Add(v) => format!("add {}", v),
-            Command::Del(i) => format!("del {}", i),
-            Command::Set(i) => format!("set {}", i),
-            Command::Tag(i, v) => format!("tag {} {}", i, v),
-            Command::Get(i) => format!("get {}", i),
-            Command::Load(v) => format!("load {}", v),
-        };
-
-        s.as_bytes().to_vec()
+        command_to_vec(&cmd)
     }
 }
 
 impl From<&Command> for Vec<u8> {
     fn from(cmd: &Command) -> Self {
-        let s = match cmd {
-            Command::List | Command::Invalid(_) => "list".to_string(),
-            Command::Help => "help".to_string(),
-            Command::Quit => "quit".to_string(),
-            Command::Add(v) => format!("add {}", v),
-            Command::Del(i) => format!("del {}", i),
-            Command::Set(i) => format!("set {}", i),
-            Command::Tag(i, v) => format!("tag {} {}", i, v),
-            Command::Get(i) => format!("get {}", i),
-            Command::Load(v) => format!("load {}", v),
-        };
-
-        s.as_bytes().to_vec()
+        command_to_vec(cmd)
     }
 }
 
@@ -162,13 +95,15 @@ pub async fn read_command(stream: &TcpStream) -> io::Result<Command> {
     let payload = String::from_utf8_lossy(&buf[..]);
 
     // parse command
-    let cmd = match payload.parse::<Command>() {
-        Err(CommandParseError::EmptyCommand) => Command::Quit,
-        Ok(cmd) => cmd,
-        Err(err) => Command::Invalid(err),
-    };
-
-    Ok(cmd)
+    let mut cmd_line = shellwords::split(&payload).unwrap();
+    let bin_name = std::env::args().next().unwrap();
+    cmd_line.insert(0, bin_name);
+    if let Ok(args) = Args::try_parse_from(cmd_line) {
+        let cmd = args.command.unwrap();
+        Ok(cmd)
+    } else {
+        Err(CommandParseError::InvalidCommand(payload.to_string()).into())
+    }
 }
 
 pub async fn write_command(stream: &mut TcpStream, cmd: Command) -> io::Result<()> {
@@ -194,6 +129,14 @@ pub struct Config {
     pub port: Option<u16>,
 }
 
+#[derive(Parser, Debug)]
+pub struct Args {
+    #[clap(short, long, value_parser)]
+    pub config: Option<PathBuf>,
+    #[clap(subcommand)]
+    pub command: Option<Command>,
+}
+
 impl Default for Config {
     fn default() -> Self {
         Config {
@@ -204,7 +147,7 @@ impl Default for Config {
     }
 }
 
-pub fn load_config(filename: &str) -> io::Result<Config> {
+pub fn load_config(filename: &Path) -> io::Result<Config> {
     let mut file = File::open(filename)?;
     let mut buffer = String::new();
     file.read_to_string(&mut buffer)?;

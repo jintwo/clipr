@@ -1,6 +1,6 @@
 use async_std::{io, net::TcpStream, prelude::*, task};
-use cliprd::common::{load_config, write_command, Command, CommandParseError, Config, Response};
-use std::env;
+use clap::Parser;
+use cliprd::common::{load_config, write_command, Args, Command, Config, Response};
 use std::sync::Arc;
 
 async fn call(config: Arc<Config>, cmd: Command) -> io::Result<Response> {
@@ -20,16 +20,6 @@ async fn call(config: Arc<Config>, cmd: Command) -> io::Result<Response> {
     Ok(Response::Data(buf))
 }
 
-fn parse_cmd() -> Result<Command, CommandParseError> {
-    let args = env::args();
-    if args.len() < 3 {
-        return Err(CommandParseError::InsufficientArgs);
-    }
-
-    let cmd_raw = args.skip(2).collect::<Vec<String>>().join(" ");
-    cmd_raw.parse::<Command>()
-}
-
 fn show_response(response: &Response) {
     match response {
         Response::Data(buf) => println!("{}", buf),
@@ -38,23 +28,21 @@ fn show_response(response: &Response) {
 }
 
 fn main() -> io::Result<()> {
-    let args = env::args();
-    let config = Arc::new(if args.len() < 2 {
-        Config::default()
+    let args = Args::parse();
+    let config = Arc::new(if let Some(filename) = args.config.as_deref() {
+        load_config(filename)?
     } else {
-        let config_filename = args.skip(1).nth(0).unwrap();
-        let config = load_config(config_filename.as_str())?;
-        config
+        Config::default()
     });
 
-    match parse_cmd() {
-        Ok(cmd) => match task::block_on(call(config, cmd)) {
+    match args.command {
+        Some(cmd) => match task::block_on(call(config, cmd)) {
             Ok(response) => {
                 show_response(&response);
                 Ok(())
             }
             Err(err) => Err(err),
         },
-        Err(_) => Err(io::Error::new(io::ErrorKind::Other, "invalid command")),
+        None => Ok(()),
     }
 }

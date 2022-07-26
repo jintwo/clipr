@@ -3,13 +3,13 @@ use async_std::io;
 use async_std::net::TcpListener;
 use async_std::prelude::*;
 use async_std::task;
+use clap::Parser;
 use cocoa::appkit::{NSPasteboard, NSPasteboardTypeString};
 use cocoa::base::{id, nil};
 use cocoa::foundation::NSString;
 use rustyline::Editor;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
-use std::env;
 use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::io::prelude::*;
@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 mod common;
-use common::{load_config, read_command, Command, CommandParseError, Config, Request, Response};
+use common::{load_config, read_command, Args, Command, Config, Request, Response};
 
 unsafe fn nsstring_to_slice(s: &id) -> &str {
     let bytes = s.UTF8String() as *const u8;
@@ -68,7 +68,7 @@ fn _format_item(item: &Item, short: bool) -> String {
         None => "".to_string(),
     };
 
-    format!("{:?} tags: {{{}}}", val, tags)
+    format!("{:?} tags: [{}]", val, tags)
 }
 
 fn _entries_to_vec(entries: &Entries) -> Vec<&Item> {
@@ -151,21 +151,30 @@ async fn repl_loop(_config: Arc<Config>, sender: Sender<Request>) {
     let mut rl = Editor::<()>::new();
     loop {
         let readline = rl.readline(":> ");
-        let cmd = match readline {
+        match readline {
             Ok(line) => {
+                if line.is_empty() {
+                    continue;
+                }
+
                 rl.add_history_entry(line.as_str());
-                match line.parse::<Command>() {
-                    Err(CommandParseError::EmptyCommand) => continue,
-                    Ok(cmd) => cmd,
-                    Err(err) => Command::Invalid(err),
+
+                let mut cmd_line = shellwords::split(line.as_str()).unwrap();
+                let bin_name = std::env::args().next().unwrap();
+                cmd_line.insert(0, bin_name);
+                if let Ok(args) = Args::try_parse_from(cmd_line) {
+                    let cmd = args.command.unwrap();
+                    sender
+                        .send(Request::CmdLine(cmd, io::stdout()))
+                        .await
+                        .unwrap();
+                } else {
+                    println!("invalid command");
+                    continue;
                 }
             }
-            Err(_) => Command::Quit,
-        };
-        sender
-            .send(Request::CmdLine(cmd, io::stdout()))
-            .await
-            .unwrap();
+            Err(_) => sender.send(Request::Quit).await.unwrap(),
+        }
     }
 }
 
@@ -173,14 +182,12 @@ async fn empty_fg_loop(_config: Arc<Config>, sender: Sender<Request>) {
     let mut rl = Editor::<()>::new();
     loop {
         let readline = rl.readline("");
-        let cmd = match readline {
+        match readline {
             Ok(_) => continue,
-            Err(_) => Command::Quit,
-        };
-        sender
-            .send(Request::CmdLine(cmd, io::stdout()))
-            .await
-            .unwrap();
+            Err(_) => {
+                sender.send(Request::Quit).await.unwrap();
+            }
+        }
     }
 }
 
@@ -244,6 +251,7 @@ async fn main_loop(_config: Arc<Config>, receiver: Receiver<Request>) -> io::Res
                     write_response(&mut stream, &rep).await?;
                     rep
                 }
+                Request::Quit => Response::Stop,
             };
 
             match response {
@@ -279,50 +287,44 @@ fn handle_insert(s: String, entries: &mut Entries) -> Response {
     }
 }
 
-fn show_help() -> String {
-    "available commands...".to_string()
-}
-
 fn handle_call(cmd: Command, entries: &mut Entries) -> Response {
     match cmd {
-        Command::Quit => Response::Stop,
-        Command::Help => Response::Data(show_help()),
         Command::List => Response::Data(dump_entries(entries)),
-        Command::Get(idx) => {
-            let result = match get_entry_value(idx, entries) {
+        Command::Get { index } => {
+            let result = match get_entry_value(index, entries) {
                 Some(val) => val,
-                None => format!("item at {:?} not found", idx),
+                None => format!("item at {:?} not found", index),
             };
             Response::Data(result)
         }
-        Command::Add(value) => {
+        Command::Add { value } => {
             unsafe { set_current_entry(value) };
             Response::Ok
         }
-        Command::Load(filename) => {
+        Command::Load { filename } => {
             let mut file = File::open(filename).unwrap();
             let mut buffer = String::new();
             file.read_to_string(&mut buffer).unwrap();
             unsafe { set_current_entry(buffer) };
             Response::Ok
         }
-        Command::Set(idx) => {
-            if let Some(value) = get_entry_value(idx, entries) {
+        Command::Set { index } => {
+            if let Some(value) = get_entry_value(index, entries) {
                 unsafe { set_current_entry(value) };
                 Response::Ok
             } else {
-                Response::Data(format!("item at {:?} not found", idx))
+                Response::Data(format!("item at {:?} not found", index))
             }
         }
-        Command::Del(idx) => {
-            if del_entry(idx, entries).is_none() {
-                Response::Data(format!("item at {:?} not found", idx))
+        Command::Del { index } => {
+            if del_entry(index, entries).is_none() {
+                Response::Data(format!("item at {:?} not found", index))
             } else {
                 Response::Ok
             }
         }
-        Command::Tag(idx, tag) => {
-            if let Some(mut item) = get_entry(idx, entries) {
+        Command::Tag { index, tag } => {
+            if let Some(mut item) = get_entry(index, entries) {
                 if item.tags.is_none() {
                     let mut tags = HashSet::<String>::new();
                     tags.insert(tag);
@@ -333,27 +335,24 @@ fn handle_call(cmd: Command, entries: &mut Entries) -> Response {
                 }
                 Response::Ok
             } else {
-                Response::Data(format!("item at {:?} not found", idx))
+                Response::Data(format!("item at {:?} not found", index))
             }
         }
-        Command::Invalid(e) => Response::Data(format!("error: {:?}", e)),
     }
 }
 
 fn main() -> io::Result<()> {
-    let args = env::args();
-    let config = Arc::new(if args.len() < 2 {
-        Config::default()
+    let args = Args::parse();
+    let config = Arc::new(if let Some(filename) = args.config.as_deref() {
+        load_config(filename)?
     } else {
-        let config_filename = args.skip(1).nth(0).unwrap();
-        let config = load_config(config_filename.as_str())?;
-        config
+        Config::default()
     });
 
     let (sender, receiver) = bounded::<Request>(1);
     task::spawn(sync_loop(config.clone(), sender.clone()));
     task::spawn(net_loop(config.clone(), sender.clone()));
     task::spawn(cmdline_loop(config.clone(), sender));
-    task::block_on(main_loop(config.clone(), receiver))?;
+    task::block_on(main_loop(config, receiver))?;
     Ok(())
 }
