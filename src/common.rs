@@ -40,13 +40,30 @@ pub enum CommandParseError {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    Add { value: String },
-    Del { index: u32 },
-    List,
-    Get { index: u32 },
-    Set { index: u32 },
-    Load { filename: String },
-    Tag { index: u32, tag: String },
+    Add {
+        #[clap(last = true)]
+        value: Vec<String>,
+    },
+    Del {
+        index: u32,
+    },
+    List {
+        offset: Option<u32>,
+    },
+    Get {
+        index: u32,
+    },
+    Set {
+        index: u32,
+    },
+    Load {
+        filename: String,
+    },
+    Tag {
+        index: u32,
+        tag: String,
+    },
+    Count,
 }
 
 impl From<CommandParseError> for std::io::Error {
@@ -57,8 +74,12 @@ impl From<CommandParseError> for std::io::Error {
 
 fn command_to_vec(cmd: &Command) -> Vec<u8> {
     let s = match cmd {
-        Command::List => "list".to_string(),
-        Command::Add { value } => format!("add {}", value),
+        Command::List { offset } => match offset {
+            Some(offset) => format!("list {}", offset),
+            None => "list".to_string(),
+        },
+        Command::Count => "count".to_string(),
+        Command::Add { value } => format!("add -- {}", value.join(" ")),
         Command::Del { index } => format!("del {}", index),
         Command::Set { index } => format!("set {}", index),
         Command::Tag { index, tag } => format!("tag {} {}", index, tag),
@@ -98,6 +119,7 @@ pub async fn read_command(stream: &TcpStream) -> io::Result<Command> {
     let mut cmd_line = shellwords::split(&payload).unwrap();
     let bin_name = std::env::args().next().unwrap();
     cmd_line.insert(0, bin_name);
+
     if let Ok(args) = Args::try_parse_from(cmd_line) {
         let cmd = args.command.unwrap();
         Ok(cmd)

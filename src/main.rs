@@ -71,16 +71,20 @@ fn _format_item(item: &Item, short: bool) -> String {
     format!("{:?} tags: [{}]", val, tags)
 }
 
-fn _entries_to_vec(entries: &Entries) -> Vec<&Item> {
+fn _entries_to_vec(entries: &Entries, offset: Option<u32>) -> Vec<&Item> {
     let mut items: Vec<&Item> = entries.values().collect();
 
     items.sort_by_key(|i| i.accessed_at);
     items.reverse();
-    items
+    if let Some(offset) = offset {
+        items.into_iter().skip(offset as usize).collect()
+    } else {
+        items
+    }
 }
 
-fn dump_entries(entries: &Entries) -> String {
-    let items = _entries_to_vec(entries);
+fn dump_entries(entries: &Entries, offset: Option<u32>) -> String {
+    let items = _entries_to_vec(entries, offset);
 
     items
         .iter()
@@ -91,7 +95,7 @@ fn dump_entries(entries: &Entries) -> String {
 }
 
 fn get_entry_value(idx: u32, entries: &Entries) -> Option<String> {
-    let items = _entries_to_vec(entries);
+    let items = _entries_to_vec(entries, None);
 
     items
         .iter()
@@ -289,7 +293,8 @@ fn handle_insert(s: String, entries: &mut Entries) -> Response {
 
 fn handle_call(cmd: Command, entries: &mut Entries) -> Response {
     match cmd {
-        Command::List => Response::Data(dump_entries(entries)),
+        Command::List { offset } => Response::Data(dump_entries(entries, offset)),
+        Command::Count => Response::Data(entries.len().to_string()),
         Command::Get { index } => {
             let result = match get_entry_value(index, entries) {
                 Some(val) => val,
@@ -298,7 +303,7 @@ fn handle_call(cmd: Command, entries: &mut Entries) -> Response {
             Response::Data(result)
         }
         Command::Add { value } => {
-            unsafe { set_current_entry(value) };
+            unsafe { set_current_entry(value.join(" ")) };
             Response::Ok
         }
         Command::Load { filename } => {
