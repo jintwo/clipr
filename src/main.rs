@@ -1,4 +1,5 @@
 use async_std::channel::{bounded, Receiver, Sender};
+use async_std::fs::File;
 use async_std::io;
 use async_std::net::TcpListener;
 use async_std::prelude::*;
@@ -10,14 +11,12 @@ use cocoa::foundation::NSString;
 use rustyline::Editor;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
-use std::fs::File;
 use std::hash::{Hash, Hasher};
-use std::io::prelude::*;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 mod common;
-use common::{load_config, read_command, Args, Command, Config, Request, Response};
+use common::{read_command, Args, Command, Config, Request, Response};
 
 unsafe fn nsstring_to_slice(s: &id) -> &str {
     let bytes = s.UTF8String() as *const u8;
@@ -120,6 +119,10 @@ fn get_entry(idx: u32, entries: &mut Entries) -> Option<&mut Item> {
     } else {
         None
     }
+}
+
+fn find_entry(entries: &Entries) -> Option<Vec<&Item>> {
+    None
 }
 
 fn shorten(s: &String) -> String {
@@ -246,12 +249,12 @@ async fn main_loop(_config: Arc<Config>, receiver: Receiver<Request>) -> io::Res
             let response = match msg {
                 Request::Sync(value) => handle_insert(value, &mut entries),
                 Request::CmdLine(cmd, mut stream) => {
-                    let rep = handle_call(cmd, &mut entries);
+                    let rep = handle_call(cmd, &mut entries).await?;
                     write_response(&mut stream, &rep).await?;
                     rep
                 }
                 Request::Net(cmd, mut stream) => {
-                    let rep = handle_call(cmd, &mut entries);
+                    let rep = handle_call(cmd, &mut entries).await?;
                     write_response(&mut stream, &rep).await?;
                     rep
                 }
@@ -291,56 +294,51 @@ fn handle_insert(s: String, entries: &mut Entries) -> Response {
     }
 }
 
-fn handle_call(cmd: Command, entries: &mut Entries) -> Response {
+async fn handle_call(cmd: Command, entries: &mut Entries) -> io::Result<Response> {
     match cmd {
-        Command::List { offset } => Response::Data(dump_entries(entries, offset)),
-        Command::Count => Response::Data(entries.len().to_string()),
+        Command::List { offset } => Ok(Response::Data(dump_entries(entries, offset))),
+        Command::Count => Ok(Response::Data(entries.len().to_string())),
         Command::Get { index } => {
             let result = match get_entry_value(index, entries) {
                 Some(val) => val,
                 None => format!("item at {:?} not found", index),
             };
-            Response::Data(result)
+            Ok(Response::Data(result))
         }
         Command::Add { value } => {
             unsafe { set_current_entry(value.join(" ")) };
-            Response::Ok
+            Ok(Response::Ok)
         }
         Command::Load { filename } => {
-            let mut file = File::open(filename).unwrap();
+            let mut file = File::open(filename).await?;
             let mut buffer = String::new();
-            file.read_to_string(&mut buffer).unwrap();
+            file.read_to_string(&mut buffer).await?;
             unsafe { set_current_entry(buffer) };
-            Response::Ok
+            Ok(Response::Ok)
         }
         Command::Set { index } => {
             if let Some(value) = get_entry_value(index, entries) {
                 unsafe { set_current_entry(value) };
-                Response::Ok
+                Ok(Response::Ok)
             } else {
-                Response::Data(format!("item at {:?} not found", index))
+                Ok(Response::Data(format!("item at {:?} not found", index)))
             }
         }
         Command::Del { index } => {
             if del_entry(index, entries).is_none() {
-                Response::Data(format!("item at {:?} not found", index))
+                Ok(Response::Data(format!("item at {:?} not found", index)))
             } else {
-                Response::Ok
+                Ok(Response::Ok)
             }
         }
         Command::Tag { index, tag } => {
-            if let Some(mut item) = get_entry(index, entries) {
-                if item.tags.is_none() {
-                    let mut tags = HashSet::<String>::new();
-                    tags.insert(tag);
-                    item.tags = Some(tags);
-                } else {
-                    let tags = item.tags.as_mut().unwrap();
-                    tags.insert(tag);
-                }
-                Response::Ok
+            if let Some(item) = get_entry(index, entries) {
+                item.tags
+                    .get_or_insert(HashSet::<String>::new())
+                    .insert(tag);
+                Ok(Response::Ok)
             } else {
-                Response::Data(format!("item at {:?} not found", index))
+                Ok(Response::Data(format!("item at {:?} not found", index)))
             }
         }
     }
@@ -348,11 +346,7 @@ fn handle_call(cmd: Command, entries: &mut Entries) -> Response {
 
 fn main() -> io::Result<()> {
     let args = Args::parse();
-    let config = Arc::new(if let Some(filename) = args.config.as_deref() {
-        load_config(filename)?
-    } else {
-        Config::default()
-    });
+    let config = Config::load_from_args(&args)?;
 
     let (sender, receiver) = bounded::<Request>(1);
     task::spawn(sync_loop(config.clone(), sender.clone()));

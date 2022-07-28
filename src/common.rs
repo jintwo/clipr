@@ -6,6 +6,7 @@ use serde_derive::Deserialize;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use thiserror::Error;
 
 pub const HEADER_LEN: usize = 8;
@@ -169,12 +170,22 @@ impl Default for Config {
     }
 }
 
-pub fn load_config(filename: &Path) -> io::Result<Config> {
-    let mut file = File::open(filename)?;
-    let mut buffer = String::new();
-    file.read_to_string(&mut buffer)?;
+impl Config {
+    pub fn load_config(filename: &Path) -> io::Result<Config> {
+        let mut file = File::open(filename)?;
+        let mut buffer = String::new();
+        file.read_to_string(&mut buffer)?;
 
-    let config: Config = toml::from_str(buffer.as_str())?;
+        let config: Config = toml::from_str(buffer.as_str())?;
 
-    Ok(config)
+        Ok(config)
+    }
+
+    pub fn load_from_args(args: &Args) -> io::Result<Arc<Self>> {
+        Ok(Arc::new(if let Some(filename) = args.config.as_deref() {
+            Self::load_config(filename)?
+        } else {
+            Self::default()
+        }))
+    }
 }
