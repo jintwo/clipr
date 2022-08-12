@@ -57,7 +57,7 @@ pub enum Command {
     Set {
         index: u32,
     },
-    Load {
+    Insert {
         filename: String,
     },
     Tag {
@@ -65,6 +65,8 @@ pub enum Command {
         tag: String,
     },
     Count,
+    Save,
+    Load,
 }
 
 impl From<CommandParseError> for std::io::Error {
@@ -80,12 +82,14 @@ fn command_to_vec(cmd: &Command) -> Vec<u8> {
             None => "list".to_string(),
         },
         Command::Count => "count".to_string(),
+        Command::Save => "save".to_string(),
+        Command::Load => "load".to_string(),
         Command::Add { value } => format!("add -- {}", value.join(" ")),
         Command::Del { index } => format!("del {}", index),
         Command::Set { index } => format!("set {}", index),
         Command::Tag { index, tag } => format!("tag {} {}", index, tag),
         Command::Get { index } => format!("get {}", index),
-        Command::Load { filename } => format!("load {}", filename),
+        Command::Insert { filename } => format!("insert {}", filename),
     };
 
     s.as_bytes().to_vec()
@@ -150,6 +154,7 @@ pub struct Config {
     pub interactive: Option<bool>,
     pub host: Option<String>,
     pub port: Option<u16>,
+    pub db: Option<String>,
 }
 
 #[derive(Parser, Debug)]
@@ -166,6 +171,7 @@ impl Default for Config {
             host: Some(String::from("127.0.0.1")),
             port: Some(8931),
             interactive: Some(true),
+            db: Some(String::from("./db.lisp")),
         }
     }
 }

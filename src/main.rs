@@ -44,13 +44,42 @@ fn calculate_hash<T: Hash>(v: T) -> u64 {
 
 type Entries = std::collections::BTreeMap<u64, Item>;
 
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 struct Item {
     value: String,
+    #[serde(with = "approx_instant")]
     accessed_at: Instant,
     access_counter: u32,
     tags: Option<HashSet<String>>,
 }
 
+mod approx_instant {
+    use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
+    use std::time::{Instant, SystemTime};
+
+    pub fn serialize<S>(instant: &Instant, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let system_now = SystemTime::now();
+        let instant_now = Instant::now();
+        let approx = system_now - (instant_now - *instant);
+        approx.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Instant, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let de = SystemTime::deserialize(deserializer)?;
+        let system_now = SystemTime::now();
+        let instant_now = Instant::now();
+        let duration = system_now.duration_since(de).map_err(Error::custom)?;
+        let approx = instant_now - duration;
+        Ok(approx)
+    }
+}
 fn _format_item(item: &Item, short: bool) -> String {
     let val = if short {
         shorten(&item.value)
@@ -99,7 +128,7 @@ fn get_entry_value(idx: u32, entries: &Entries) -> Option<String> {
     items
         .iter()
         .enumerate()
-        .find(|(i, _item)| idx == (*i).try_into().unwrap())
+        .find(|(i, _item)| idx == <usize as std::convert::TryInto<u32>>::try_into(*i).unwrap())
         .map(|(_, item)| item.value.clone())
 }
 
@@ -121,7 +150,7 @@ fn get_entry(idx: u32, entries: &mut Entries) -> Option<&mut Item> {
     }
 }
 
-fn find_entry(entries: &Entries) -> Option<Vec<&Item>> {
+fn find_entry(_entries: &Entries) -> Option<Vec<&Item>> {
     None
 }
 
@@ -241,7 +270,7 @@ async fn write_response<W: io::WriteExt + std::marker::Unpin>(
     Ok(())
 }
 
-async fn main_loop(_config: Arc<Config>, receiver: Receiver<Request>) -> io::Result<()> {
+async fn main_loop(config: Arc<Config>, receiver: Receiver<Request>) -> io::Result<()> {
     let mut entries = Entries::new();
 
     loop {
@@ -249,12 +278,12 @@ async fn main_loop(_config: Arc<Config>, receiver: Receiver<Request>) -> io::Res
             let response = match msg {
                 Request::Sync(value) => handle_insert(value, &mut entries),
                 Request::CmdLine(cmd, mut stream) => {
-                    let rep = handle_call(cmd, &mut entries).await?;
+                    let rep = handle_call(config.clone(), cmd, &mut entries).await?;
                     write_response(&mut stream, &rep).await?;
                     rep
                 }
                 Request::Net(cmd, mut stream) => {
-                    let rep = handle_call(cmd, &mut entries).await?;
+                    let rep = handle_call(config.clone(), cmd, &mut entries).await?;
                     write_response(&mut stream, &rep).await?;
                     rep
                 }
@@ -293,11 +322,41 @@ fn handle_insert(s: String, entries: &mut Entries) -> Response {
         }
     }
 }
+async fn save_db(config: Arc<Config>, entries: &Entries) -> io::Result<()> {
+    let db_path = config.db.as_ref().unwrap();
+    let mut file = File::create(db_path).await?;
+    let data = serde_lexpr::to_string_custom(entries, serde_lexpr::print::Options::elisp())?;
+    file.write_all(&data.as_bytes()).await?;
+    Ok(())
+}
 
-async fn handle_call(cmd: Command, entries: &mut Entries) -> io::Result<Response> {
+async fn load_db(config: Arc<Config>, entries: &mut Entries) -> io::Result<()> {
+    let db_path = config.db.as_ref().unwrap();
+    let mut file = File::open(db_path).await?;
+    let mut buffer = String::new();
+    file.read_to_string(&mut buffer).await?;
+    let mut data: Entries =
+        serde_lexpr::from_str_custom(buffer.as_str(), serde_lexpr::parse::Options::elisp())?;
+    entries.append(&mut data);
+    Ok(())
+}
+
+async fn handle_call(
+    config: Arc<Config>,
+    cmd: Command,
+    entries: &mut Entries,
+) -> io::Result<Response> {
     match cmd {
         Command::List { offset } => Ok(Response::Data(dump_entries(entries, offset))),
         Command::Count => Ok(Response::Data(entries.len().to_string())),
+        Command::Save => {
+            save_db(config, entries).await.unwrap();
+            Ok(Response::Ok)
+        }
+        Command::Load => {
+            load_db(config, entries).await.unwrap();
+            Ok(Response::Ok)
+        }
         Command::Get { index } => {
             let result = match get_entry_value(index, entries) {
                 Some(val) => val,
@@ -309,7 +368,7 @@ async fn handle_call(cmd: Command, entries: &mut Entries) -> io::Result<Response
             unsafe { set_current_entry(value.join(" ")) };
             Ok(Response::Ok)
         }
-        Command::Load { filename } => {
+        Command::Insert { filename } => {
             let mut file = File::open(filename).await?;
             let mut buffer = String::new();
             file.read_to_string(&mut buffer).await?;
