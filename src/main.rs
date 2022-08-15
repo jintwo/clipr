@@ -13,7 +13,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 
 mod common;
 use common::{read_command, Args, Command, Config, Request, Response};
@@ -48,38 +48,11 @@ type Entries = std::collections::BTreeMap<u64, Item>;
 #[serde(rename_all = "kebab-case")]
 struct Item {
     value: String,
-    #[serde(with = "approx_instant")]
-    accessed_at: Instant,
+    accessed_at: SystemTime,
     access_counter: u32,
     tags: Option<HashSet<String>>,
 }
 
-mod approx_instant {
-    use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
-    use std::time::{Instant, SystemTime};
-
-    pub fn serialize<S>(instant: &Instant, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let system_now = SystemTime::now();
-        let instant_now = Instant::now();
-        let approx = system_now - (instant_now - *instant);
-        approx.serialize(serializer)
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Instant, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let de = SystemTime::deserialize(deserializer)?;
-        let system_now = SystemTime::now();
-        let instant_now = Instant::now();
-        let duration = system_now.duration_since(de).map_err(Error::custom)?;
-        let approx = instant_now - duration;
-        Ok(approx)
-    }
-}
 fn _format_item(item: &Item, short: bool) -> String {
     let val = if short {
         shorten(&item.value)
@@ -303,12 +276,12 @@ fn handle_insert(s: String, entries: &mut Entries) -> Response {
 
     match entries.get_mut(&hash) {
         Some(item) => {
-            item.accessed_at = Instant::now();
+            item.accessed_at = SystemTime::now();
             item.access_counter += 1;
             Response::Ok
         }
         None => {
-            let now = Instant::now();
+            let now = SystemTime::now();
             entries.insert(
                 hash,
                 Item {
