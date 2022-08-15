@@ -95,6 +95,14 @@ fn dump_entries(entries: &Entries, offset: Option<u32>) -> String {
         .join("\n")
 }
 
+fn dump_indexed_items(items: Vec<(u32, &Item)>) -> String {
+    items
+        .iter()
+        .map(|(idx, item)| format!("{:?}: {}", idx, _format_item(item, true)))
+        .collect::<Vec<String>>()
+        .join("\n")
+}
+
 fn get_entry_value(idx: u32, entries: &Entries) -> Option<String> {
     let items = _entries_to_vec(entries, None);
 
@@ -123,8 +131,32 @@ fn get_entry(idx: u32, entries: &mut Entries) -> Option<&mut Item> {
     }
 }
 
-fn find_entry(_entries: &Entries) -> Option<Vec<&Item>> {
-    None
+fn find_entry_by_value(entries: &Entries, value: String) -> Vec<(u32, &Item)> {
+    let items = _entries_to_vec(entries, None);
+
+    items
+        .iter()
+        .enumerate()
+        .filter(|(_, &item)| item.value.contains(value.as_str()))
+        .map(|(idx, &item)| (idx as u32, item))
+        .collect::<Vec<(u32, &Item)>>()
+}
+
+fn find_entry_by_tag(entries: &Entries, tag: String) -> Vec<(u32, &Item)> {
+    let items = _entries_to_vec(entries, None);
+
+    items
+        .iter()
+        .enumerate()
+        .filter(|(_, &item)| {
+            if let Some(tags) = &item.tags {
+                tags.get(&tag).is_some()
+            } else {
+                false
+            }
+        })
+        .map(|(idx, &item)| (idx as u32, item))
+        .collect::<Vec<(u32, &Item)>>()
 }
 
 fn shorten(s: &String) -> String {
@@ -299,7 +331,7 @@ async fn save_db(config: Arc<Config>, entries: &Entries) -> io::Result<()> {
     let db_path = config.db.as_ref().unwrap();
     let mut file = File::create(db_path).await?;
     let data = serde_lexpr::to_string_custom(entries, serde_lexpr::print::Options::elisp())?;
-    file.write_all(&data.as_bytes()).await?;
+    file.write_all(data.as_bytes()).await?;
     Ok(())
 }
 
@@ -372,6 +404,20 @@ async fn handle_call(
             } else {
                 Ok(Response::Data(format!("item at {:?} not found", index)))
             }
+        }
+        Command::Select { value } => {
+            if value.len() < 2 {
+                return Ok(Response::Data("invalid args".to_string()));
+            }
+            Ok(if value[0] == "value" {
+                let items = find_entry_by_value(entries, (&value[1]).to_string());
+                Response::Data(dump_indexed_items(items))
+            } else if value[0] == "tag" {
+                let items = find_entry_by_tag(entries, (&value[1]).to_string());
+                Response::Data(dump_indexed_items(items))
+            } else {
+                Response::Ok
+            })
         }
     }
 }

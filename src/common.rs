@@ -67,6 +67,10 @@ pub enum Command {
     Count,
     Save,
     Load,
+    Select {
+        #[clap(last = true)]
+        value: Vec<String>,
+    },
 }
 
 impl From<CommandParseError> for std::io::Error {
@@ -90,6 +94,7 @@ fn command_to_vec(cmd: &Command) -> Vec<u8> {
         Command::Tag { index, tag } => format!("tag {} {}", index, tag),
         Command::Get { index } => format!("get {}", index),
         Command::Insert { filename } => format!("insert {}", filename),
+        Command::Select { value } => format!("select -- {}", value.join(" ")),
     };
 
     s.as_bytes().to_vec()
