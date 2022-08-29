@@ -46,22 +46,22 @@ pub enum Command {
         value: Vec<String>,
     },
     Del {
-        index: u32,
+        index: usize,
     },
     List {
-        offset: Option<u32>,
+        offset: Option<usize>,
     },
     Get {
-        index: u32,
+        index: usize,
     },
     Set {
-        index: u32,
+        index: usize,
     },
     Insert {
         filename: String,
     },
     Tag {
-        index: u32,
+        index: usize,
         tag: String,
     },
     Count,

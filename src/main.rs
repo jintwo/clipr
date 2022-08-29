@@ -72,48 +72,55 @@ fn _format_item(item: &Item, short: bool) -> String {
     format!("{:?} tags: [{}]", val, tags)
 }
 
-fn _entries_to_vec(entries: &Entries, offset: Option<u32>) -> Vec<&Item> {
+fn _entries_to_indexed_vec(entries: &Entries, offset: Option<usize>) -> Vec<(usize, &Item)> {
     let mut items: Vec<&Item> = entries.values().collect();
 
     items.sort_by_key(|i| i.accessed_at);
     items.reverse();
+
+    let items_indexed: Vec<(usize, &Item)> = items.into_iter().enumerate().collect();
+
     if let Some(offset) = offset {
-        items.into_iter().skip(offset as usize).collect()
+        items_indexed.into_iter().skip(offset as usize).collect()
     } else {
-        items
+        items_indexed
     }
 }
 
-fn dump_entries(entries: &Entries, offset: Option<u32>) -> String {
-    let items = _entries_to_vec(entries, offset);
+fn dump_entries(entries: &Entries, offset: Option<usize>) -> String {
+    let items = _entries_to_indexed_vec(entries, offset);
 
     items
         .iter()
-        .enumerate()
+        .map(|(idx, item)| {
+            format!(
+                "{:?}: {}",
+                idx + offset.or(Some(0)).unwrap(),
+                _format_item(item, true)
+            )
+        })
+        .collect::<Vec<String>>()
+        .join("\n")
+}
+
+fn dump_indexed_items(items: Vec<(usize, &Item)>) -> String {
+    items
+        .iter()
         .map(|(idx, item)| format!("{:?}: {}", idx, _format_item(item, true)))
         .collect::<Vec<String>>()
         .join("\n")
 }
 
-fn dump_indexed_items(items: Vec<(u32, &Item)>) -> String {
-    items
-        .iter()
-        .map(|(idx, item)| format!("{:?}: {}", idx, _format_item(item, true)))
-        .collect::<Vec<String>>()
-        .join("\n")
-}
-
-fn get_entry_value(idx: u32, entries: &Entries) -> Option<String> {
-    let items = _entries_to_vec(entries, None);
+fn get_entry_value(idx: usize, entries: &Entries) -> Option<String> {
+    let items = _entries_to_indexed_vec(entries, None);
 
     items
         .iter()
-        .enumerate()
-        .find(|(i, _item)| idx == <usize as std::convert::TryInto<u32>>::try_into(*i).unwrap())
+        .find(|(i, _item)| idx == *i)
         .map(|(_, item)| item.value.clone())
 }
 
-fn del_entry(idx: u32, entries: &mut Entries) -> Option<Item> {
+fn del_entry(idx: usize, entries: &mut Entries) -> Option<Item> {
     if let Some(value) = get_entry_value(idx, entries) {
         let hash = calculate_hash(value);
         entries.remove(&hash)
@@ -122,7 +129,7 @@ fn del_entry(idx: u32, entries: &mut Entries) -> Option<Item> {
     }
 }
 
-fn get_entry(idx: u32, entries: &mut Entries) -> Option<&mut Item> {
+fn get_entry(idx: usize, entries: &mut Entries) -> Option<&mut Item> {
     if let Some(value) = get_entry_value(idx, entries) {
         let hash = calculate_hash(value);
         entries.get_mut(&hash)
@@ -131,39 +138,37 @@ fn get_entry(idx: u32, entries: &mut Entries) -> Option<&mut Item> {
     }
 }
 
-fn find_entry_by_value(entries: &Entries, value: String) -> Vec<(u32, &Item)> {
-    let items = _entries_to_vec(entries, None);
+fn select_entries_by_value(entries: &Entries, value: String) -> Vec<(usize, &Item)> {
+    let items = _entries_to_indexed_vec(entries, None);
 
     items
-        .iter()
-        .enumerate()
-        .filter(|(_, &item)| item.value.contains(value.as_str()))
-        .map(|(idx, &item)| (idx as u32, item))
-        .collect::<Vec<(u32, &Item)>>()
+        .into_iter()
+        .filter(|(_, item)| item.value.contains(value.as_str()))
+        .collect()
 }
 
-fn find_entry_by_tag(entries: &Entries, tag: String) -> Vec<(u32, &Item)> {
-    let items = _entries_to_vec(entries, None);
+fn select_entries_by_tag(entries: &Entries, tag: String) -> Vec<(usize, &Item)> {
+    let items = _entries_to_indexed_vec(entries, None);
 
     items
-        .iter()
-        .enumerate()
-        .filter(|(_, &item)| {
+        .into_iter()
+        .filter(|(_, item)| {
             if let Some(tags) = &item.tags {
                 tags.get(&tag).is_some()
             } else {
                 false
             }
         })
-        .map(|(idx, &item)| (idx as u32, item))
-        .collect::<Vec<(u32, &Item)>>()
+        .collect()
 }
 
 fn shorten(s: &String) -> String {
     let mut res = s.clone();
 
-    if res.len() > 64 {
-        res.replace_range(16..(s.len() - 16), "...");
+    if res.chars().count() > 64 {
+        // TODO: there is a problem with non-ASCII symobls
+        // res.replace_range(16..(s.len() - 16), "...");
+        res.truncate(32);
     }
 
     res
@@ -410,10 +415,10 @@ async fn handle_call(
                 return Ok(Response::Data("invalid args".to_string()));
             }
             Ok(if value[0] == "value" {
-                let items = find_entry_by_value(entries, (&value[1]).to_string());
+                let items = select_entries_by_value(entries, (&value[1]).to_string());
                 Response::Data(dump_indexed_items(items))
             } else if value[0] == "tag" {
-                let items = find_entry_by_tag(entries, (&value[1]).to_string());
+                let items = select_entries_by_tag(entries, (&value[1]).to_string());
                 Response::Data(dump_indexed_items(items))
             } else {
                 Response::Ok
