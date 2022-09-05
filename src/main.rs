@@ -163,15 +163,22 @@ fn select_entries_by_tag(entries: &Entries, tag: String) -> Vec<(usize, &Item)> 
 }
 
 fn shorten(s: &String) -> String {
-    let mut res = s.clone();
+    let chars = s.chars();
+    let length = s.chars().count();
 
-    if res.chars().count() > 64 {
-        // TODO: there is a problem with non-ASCII symobls
-        // res.replace_range(16..(s.len() - 16), "...");
-        res.truncate(32);
+    if length > 64 {
+        chars.enumerate().fold(String::new(), |acc, (i, c)| {
+            if i < 16 || i > length - 16 {
+                format!("{acc}{c}")
+            } else if i > 16 && i < 20 {
+                format!("{acc}.")
+            } else {
+                acc
+            }
+        })
+    } else {
+        chars.collect::<String>()
     }
-
-    res
 }
 
 async fn sync_loop(_config: Arc<Config>, sender: Sender<Request>) {
