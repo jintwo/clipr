@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.58"
 async-std = "1.12.0"
+chrono = "0.4.22"
 clap = { version = "3.2.14", features = ["derive"] }
 cocoa = { version = "0.24.0" }
 objc = "0.2.3"

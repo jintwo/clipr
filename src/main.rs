@@ -4,6 +4,7 @@ use async_std::io;
 use async_std::net::TcpListener;
 use async_std::prelude::*;
 use async_std::task;
+use chrono::prelude::*;
 use clap::Parser;
 use cocoa::appkit::{NSPasteboard, NSPasteboardTypeString};
 use cocoa::base::{id, nil};
@@ -69,7 +70,14 @@ fn _format_item(item: &Item, short: bool) -> String {
         None => "".to_string(),
     };
 
-    format!("{:?} tags: [{}]", val, tags)
+    let dt: DateTime<Local> = item.accessed_at.into();
+
+    format!(
+        "{:<64} #[{:<16}] @[{:<10}] ",
+        val,
+        tags,
+        dt.format("%d-%m-%Y")
+    )
 }
 
 fn _entries_to_indexed_vec(entries: &Entries, offset: Option<usize>) -> Vec<(usize, &Item)> {
@@ -162,15 +170,32 @@ fn select_entries_by_tag(entries: &Entries, tag: String) -> Vec<(usize, &Item)> 
         .collect()
 }
 
+fn _has_newlines(s: &str) -> Option<usize> {
+    s.as_bytes()
+        .iter()
+        .enumerate()
+        .find(|&(_, c)| *c == b'\n')
+        .map(|(i, _)| i)
+}
+
+const MAX_LEN: usize = 64;
+const SPACER_LEN: usize = 4;
+const PREFIX_LEN: usize = 16;
+
 fn shorten(s: &String) -> String {
     let chars = s.chars();
     let length = s.chars().count();
 
-    if length > 64 {
+    // TODO:
+    // 0. if has length > 64 -> S[0...PREFIX_LEN]...S[-PREFIX_LEN...]
+    // 1. if has whitespaces until prefix-len -> S[0...PREFIX_LEN]...
+    // 2. if has whitespaces after spacer -> S[0...PREFIX_LEN]...
+
+    let mut short = if length > MAX_LEN {
         chars.enumerate().fold(String::new(), |acc, (i, c)| {
-            if i < 16 || i > length - 16 {
+            if i < PREFIX_LEN || i > length - PREFIX_LEN {
                 format!("{acc}{c}")
-            } else if i > 16 && i < 20 {
+            } else if i > PREFIX_LEN && i < (PREFIX_LEN + SPACER_LEN) {
                 format!("{acc}.")
             } else {
                 acc
@@ -178,7 +203,11 @@ fn shorten(s: &String) -> String {
         })
     } else {
         chars.collect::<String>()
-    }
+    };
+
+    let newline_offset = _has_newlines(short.as_str()).unwrap_or(short.len());
+    short.replace_range(newline_offset.., "...");
+    short
 }
 
 async fn sync_loop(_config: Arc<Config>, sender: Sender<Request>) {
