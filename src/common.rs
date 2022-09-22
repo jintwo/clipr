@@ -71,6 +71,7 @@ pub enum Command {
         #[clap(last = true)]
         value: Vec<String>,
     },
+    Help,
 }
 
 impl From<CommandParseError> for std::io::Error {
@@ -95,6 +96,7 @@ fn command_to_vec(cmd: &Command) -> Vec<u8> {
         Command::Get { index } => format!("get {}", index),
         Command::Insert { filename } => format!("insert {}", filename),
         Command::Select { value } => format!("select -- {}", value.join(" ")),
+        Command::Help => "help".to_string(),
     };
 
     s.as_bytes().to_vec()

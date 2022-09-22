@@ -103,7 +103,7 @@ fn dump_entries(entries: &Entries, offset: Option<usize>) -> String {
         .map(|(idx, item)| {
             format!(
                 "{:?}: {}",
-                idx + offset.or(Some(0)).unwrap(),
+                idx + offset.unwrap_or(0),
                 _format_item(item, true)
             )
         })
@@ -182,7 +182,7 @@ const MAX_LEN: usize = 64;
 const SPACER_LEN: usize = 4;
 const PREFIX_LEN: usize = 16;
 
-fn shorten(s: &String) -> String {
+fn shorten(s: &str) -> String {
     let chars = s.chars();
     let length = s.chars().count();
 
@@ -244,16 +244,16 @@ async fn repl_loop(_config: Arc<Config>, sender: Sender<Request>) {
                 let mut cmd_line = shellwords::split(line.as_str()).unwrap();
                 let bin_name = std::env::args().next().unwrap();
                 cmd_line.insert(0, bin_name);
-                if let Ok(args) = Args::try_parse_from(cmd_line) {
-                    let cmd = args.command.unwrap();
-                    sender
-                        .send(Request::CmdLine(cmd, io::stdout()))
-                        .await
-                        .unwrap();
-                } else {
-                    println!("invalid command");
-                    continue;
-                }
+
+                let cmd = match Args::try_parse_from(cmd_line) {
+                    Ok(args) => args.command.unwrap(),
+                    Err(_) => Command::Help,
+                };
+
+                sender
+                    .send(Request::CmdLine(cmd, io::stdout()))
+                    .await
+                    .unwrap();
             }
             Err(_) => sender.send(Request::Quit).await.unwrap(),
         }
@@ -451,14 +451,31 @@ async fn handle_call(
                 return Ok(Response::Data("invalid args".to_string()));
             }
             Ok(if value[0] == "value" {
-                let items = select_entries_by_value(entries, (&value[1]).to_string());
+                let items = select_entries_by_value(entries, (value[1]).to_string());
                 Response::Data(dump_indexed_items(items))
             } else if value[0] == "tag" {
-                let items = select_entries_by_tag(entries, (&value[1]).to_string());
+                let items = select_entries_by_tag(entries, (value[1]).to_string());
                 Response::Data(dump_indexed_items(items))
             } else {
                 Response::Ok
             })
+        }
+
+        Command::Help => {
+            let usage: &str = "
+  list ?offset
+  count
+  save
+  load
+  add -- str [?str...]
+  del index
+  set index
+  tag index tag
+  get index
+  insert filename
+  select -- 'value'/'tag' str
+  help";
+            Ok(Response::Data(usage.to_string()))
         }
     }
 }
