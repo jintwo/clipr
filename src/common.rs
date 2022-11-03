@@ -14,9 +14,8 @@ pub const HEADER_LEN: usize = 8;
 
 pub enum Request {
     Sync(String),
+    Command(Command, Sender<Response>),
     Quit,
-    CmdLine(Command, Sender<Response>),
-    Net(Command, Sender<Response>),
 }
 
 #[derive(Debug)]

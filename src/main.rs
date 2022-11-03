@@ -255,7 +255,7 @@ async fn repl_loop(_config: Arc<Config>, sender: Sender<Request>) {
                     Err(_) => Command::Help,
                 };
                 let (tx, rx) = bounded::<Response>(1);
-                sender.send(Request::CmdLine(cmd, tx)).await.unwrap();
+                sender.send(Request::Command(cmd, tx)).await.unwrap();
                 match rx.recv().await {
                     Ok(Response::Data(val)) => println!("{}", val),
                     Ok(Response::Stop) => return,
@@ -304,7 +304,7 @@ async fn net_loop(config: Arc<Config>, sender: Sender<Request>) -> io::Result<()
         task::spawn(async move {
             let cmd = read_command(&stream).await?;
             let (tx, rx) = bounded::<Response>(1);
-            sender.send(Request::Net(cmd, tx)).await.unwrap();
+            sender.send(Request::Command(cmd, tx)).await.unwrap();
             match rx.recv().await {
                 Ok(Response::Data(val)) => {
                     stream.write_all(val.as_bytes()).await?;
@@ -327,7 +327,7 @@ async fn main_loop(config: Arc<Config>, receiver: Receiver<Request>) -> io::Resu
             match msg {
                 Request::Quit => Response::Stop,
                 Request::Sync(value) => handle_insert(value, &mut entries),
-                Request::CmdLine(cmd, sender) | Request::Net(cmd, sender) => {
+                Request::Command(cmd, sender) => {
                     let response = handle_call(config.clone(), cmd, &mut entries)
                         .await
                         .unwrap();
@@ -474,7 +474,8 @@ async fn handle_call(
   get index
   insert filename
   select -- 'value'/'tag' str
-  help";
+  help
+  quit";
             Ok(Response::Data(usage.to_string()))
         }
         Command::Quit => Ok(Response::Stop),
