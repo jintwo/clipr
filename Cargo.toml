@@ -12,7 +12,7 @@ chrono = "0.4.22"
 clap = { version = "3.2.14", features = ["derive"] }
 cocoa = { version = "0.24.0" }
 objc = "0.2.3"
-rustyline = "9.1.0"
+rustyline = "10.0.0"
 serde = { version = "1.0.139", features = ["derive"] }
 serde-lexpr = "0.1.2"
 serde_derive = "1.0.140"

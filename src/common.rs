@@ -1,3 +1,4 @@
+use async_std::channel::Sender;
 use async_std::io;
 use async_std::net::TcpStream;
 use async_std::prelude::*;
@@ -11,12 +12,11 @@ use thiserror::Error;
 
 pub const HEADER_LEN: usize = 8;
 
-#[derive(Debug)]
 pub enum Request {
     Sync(String),
     Quit,
-    CmdLine(Command, io::Stdout),
-    Net(Command, TcpStream),
+    CmdLine(Command, Sender<Response>),
+    Net(Command, Sender<Response>),
 }
 
 #[derive(Debug)]
@@ -49,6 +49,7 @@ pub enum Command {
         index: usize,
     },
     List {
+        limit: Option<usize>,
         offset: Option<usize>,
     },
     Get {
@@ -72,6 +73,7 @@ pub enum Command {
         value: Vec<String>,
     },
     Help,
+    Quit,
 }
 
 impl From<CommandParseError> for std::io::Error {
@@ -82,9 +84,10 @@ impl From<CommandParseError> for std::io::Error {
 
 fn command_to_vec(cmd: &Command) -> Vec<u8> {
     let s = match cmd {
-        Command::List { offset } => match offset {
-            Some(offset) => format!("list {}", offset),
-            None => "list".to_string(),
+        Command::List { limit, offset } => match (limit, offset) {
+            (Some(limit), Some(offset)) => format!("list {} {}", limit, offset),
+            (Some(limit), None) => format!("list {}", limit),
+            (None, _) => "list".to_string(),
         },
         Command::Count => "count".to_string(),
         Command::Save => "save".to_string(),
@@ -97,6 +100,7 @@ fn command_to_vec(cmd: &Command) -> Vec<u8> {
         Command::Insert { filename } => format!("insert {}", filename),
         Command::Select { value } => format!("select -- {}", value.join(" ")),
         Command::Help => "help".to_string(),
+        Command::Quit => "quit".to_string(),
     };
 
     s.as_bytes().to_vec()

@@ -80,23 +80,28 @@ fn _format_item(item: &Item, short: bool) -> String {
     )
 }
 
-fn _entries_to_indexed_vec(entries: &Entries, offset: Option<usize>) -> Vec<(usize, &Item)> {
+fn _entries_to_indexed_vec(
+    entries: &Entries,
+    limit: Option<usize>,
+    offset: Option<usize>,
+) -> Vec<(usize, &Item)> {
     let mut items: Vec<&Item> = entries.values().collect();
 
     items.sort_by_key(|i| i.accessed_at);
     items.reverse();
 
-    let items_indexed: Vec<(usize, &Item)> = items.into_iter().enumerate().collect();
+    let items_count = items.len();
 
-    if let Some(offset) = offset {
-        items_indexed.into_iter().skip(offset as usize).collect()
-    } else {
-        items_indexed
-    }
+    items
+        .into_iter()
+        .enumerate()
+        .skip(offset.unwrap_or(0))
+        .take(limit.unwrap_or(items_count))
+        .collect()
 }
 
-fn dump_entries(entries: &Entries, offset: Option<usize>) -> String {
-    let items = _entries_to_indexed_vec(entries, offset);
+fn dump_entries(entries: &Entries, limit: Option<usize>, offset: Option<usize>) -> String {
+    let items = _entries_to_indexed_vec(entries, limit, offset);
 
     items
         .iter()
@@ -120,7 +125,7 @@ fn dump_indexed_items(items: Vec<(usize, &Item)>) -> String {
 }
 
 fn get_entry_value(idx: usize, entries: &Entries) -> Option<String> {
-    let items = _entries_to_indexed_vec(entries, None);
+    let items = _entries_to_indexed_vec(entries, None, None);
 
     items
         .iter()
@@ -147,7 +152,7 @@ fn get_entry(idx: usize, entries: &mut Entries) -> Option<&mut Item> {
 }
 
 fn select_entries_by_value(entries: &Entries, value: String) -> Vec<(usize, &Item)> {
-    let items = _entries_to_indexed_vec(entries, None);
+    let items = _entries_to_indexed_vec(entries, None, None);
 
     items
         .into_iter()
@@ -156,7 +161,7 @@ fn select_entries_by_value(entries: &Entries, value: String) -> Vec<(usize, &Ite
 }
 
 fn select_entries_by_tag(entries: &Entries, tag: String) -> Vec<(usize, &Item)> {
-    let items = _entries_to_indexed_vec(entries, None);
+    let items = _entries_to_indexed_vec(entries, None, None);
 
     items
         .into_iter()
@@ -230,7 +235,7 @@ async fn sync_loop(_config: Arc<Config>, sender: Sender<Request>) {
 }
 
 async fn repl_loop(_config: Arc<Config>, sender: Sender<Request>) {
-    let mut rl = Editor::<()>::new();
+    let mut rl = Editor::<()>::new().unwrap();
     loop {
         let readline = rl.readline(":> ");
         match readline {
@@ -249,11 +254,13 @@ async fn repl_loop(_config: Arc<Config>, sender: Sender<Request>) {
                     Ok(args) => args.command.unwrap(),
                     Err(_) => Command::Help,
                 };
-
-                sender
-                    .send(Request::CmdLine(cmd, io::stdout()))
-                    .await
-                    .unwrap();
+                let (tx, rx) = bounded::<Response>(1);
+                sender.send(Request::CmdLine(cmd, tx)).await.unwrap();
+                match rx.recv().await {
+                    Ok(Response::Data(val)) => println!("{}", val),
+                    Ok(Response::Stop) => return,
+                    Ok(_) | Err(_) => continue,
+                }
             }
             Err(_) => sender.send(Request::Quit).await.unwrap(),
         }
@@ -261,7 +268,7 @@ async fn repl_loop(_config: Arc<Config>, sender: Sender<Request>) {
 }
 
 async fn empty_fg_loop(_config: Arc<Config>, sender: Sender<Request>) {
-    let mut rl = Editor::<()>::new();
+    let mut rl = Editor::<()>::new().unwrap();
     loop {
         let readline = rl.readline("");
         match readline {
@@ -292,27 +299,23 @@ async fn net_loop(config: Arc<Config>, sender: Sender<Request>) -> io::Result<()
     let mut incoming = listener.incoming();
 
     while let Some(stream) = incoming.next().await {
-        let stream = stream?;
+        let mut stream = stream?;
         let sender = sender.clone();
         task::spawn(async move {
-            let command = read_command(&stream).await?;
-            let request = Request::Net(command, stream);
-            sender.send(request).await.unwrap();
+            let cmd = read_command(&stream).await?;
+            let (tx, rx) = bounded::<Response>(1);
+            sender.send(Request::Net(cmd, tx)).await.unwrap();
+            match rx.recv().await {
+                Ok(Response::Data(val)) => {
+                    stream.write_all(val.as_bytes()).await?;
+                    stream.write(b"\n").await?;
+                }
+                Ok(_) | Err(_) => (),
+            }
             Ok::<(), std::io::Error>(())
         });
     }
 
-    Ok(())
-}
-
-async fn write_response<W: io::WriteExt + std::marker::Unpin>(
-    stream: &mut W,
-    response: &Response,
-) -> io::Result<()> {
-    if let Response::Data(val) = response {
-        stream.write_all(val.as_bytes()).await?;
-        stream.write(b"\n").await?;
-    }
     Ok(())
 }
 
@@ -321,25 +324,22 @@ async fn main_loop(config: Arc<Config>, receiver: Receiver<Request>) -> io::Resu
 
     loop {
         if let Ok(msg) = receiver.recv().await {
-            let response = match msg {
-                Request::Sync(value) => handle_insert(value, &mut entries),
-                Request::CmdLine(cmd, mut stream) => {
-                    let rep = handle_call(config.clone(), cmd, &mut entries).await?;
-                    write_response(&mut stream, &rep).await?;
-                    rep
-                }
-                Request::Net(cmd, mut stream) => {
-                    let rep = handle_call(config.clone(), cmd, &mut entries).await?;
-                    write_response(&mut stream, &rep).await?;
-                    rep
-                }
+            match msg {
                 Request::Quit => Response::Stop,
+                Request::Sync(value) => handle_insert(value, &mut entries),
+                Request::CmdLine(cmd, sender) | Request::Net(cmd, sender) => {
+                    let response = handle_call(config.clone(), cmd, &mut entries)
+                        .await
+                        .unwrap();
+                    match response {
+                        Response::Stop => return Ok(()),
+                        _ => {
+                            sender.send(response).await.unwrap();
+                            continue;
+                        }
+                    }
+                }
             };
-
-            match response {
-                Response::Stop => return Ok(()),
-                Response::Ok | Response::NewItem(_) | Response::Data(_) => continue,
-            }
         }
     }
 }
@@ -393,7 +393,7 @@ async fn handle_call(
     entries: &mut Entries,
 ) -> io::Result<Response> {
     match cmd {
-        Command::List { offset } => Ok(Response::Data(dump_entries(entries, offset))),
+        Command::List { offset, limit } => Ok(Response::Data(dump_entries(entries, limit, offset))),
         Command::Count => Ok(Response::Data(entries.len().to_string())),
         Command::Save => {
             save_db(config, entries).await.unwrap();
@@ -463,7 +463,7 @@ async fn handle_call(
 
         Command::Help => {
             let usage: &str = "
-  list ?offset
+  list ?limit ?offset
   count
   save
   load
@@ -477,6 +477,7 @@ async fn handle_call(
   help";
             Ok(Response::Data(usage.to_string()))
         }
+        Command::Quit => Ok(Response::Stop),
     }
 }
 
