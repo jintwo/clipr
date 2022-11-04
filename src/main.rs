@@ -133,13 +133,18 @@ fn get_entry_value(idx: usize, entries: &Entries) -> Option<String> {
         .map(|(_, item)| item.value.clone())
 }
 
-fn del_entry(idx: usize, entries: &mut Entries) -> Option<Item> {
-    if let Some(value) = get_entry_value(idx, entries) {
-        let hash = calculate_hash(value);
-        entries.remove(&hash)
-    } else {
-        None
-    }
+fn del_entries(from_idx: usize, to_idx: Option<usize>, entries: &mut Entries) {
+    let items = _entries_to_indexed_vec(entries, None, None);
+
+    let hashes: Vec<u64> = items
+        .iter()
+        .filter(|(i, _item)| *i >= from_idx && *i <= to_idx.unwrap_or(from_idx))
+        .map(|(_, item)| calculate_hash(&item.value))
+        .collect();
+
+    hashes.iter().for_each(|hash| {
+        entries.remove(hash);
+    });
 }
 
 fn get_entry(idx: usize, entries: &mut Entries) -> Option<&mut Item> {
@@ -429,12 +434,12 @@ async fn handle_call(
                 Ok(Response::Data(format!("item at {:?} not found", index)))
             }
         }
-        Command::Del { index } => {
-            if del_entry(index, entries).is_none() {
-                Ok(Response::Data(format!("item at {:?} not found", index)))
-            } else {
-                Ok(Response::Ok)
-            }
+        Command::Del {
+            from_index,
+            to_index,
+        } => {
+            del_entries(from_index, to_index, entries);
+            Ok(Response::Ok)
         }
         Command::Tag { index, tag } => {
             if let Some(item) = get_entry(index, entries) {
@@ -468,7 +473,7 @@ async fn handle_call(
   save
   load
   add -- str [?str...]
-  del index
+  del index ?to-index
   set index
   tag index tag
   get index

@@ -45,7 +45,8 @@ pub enum Command {
         value: Vec<String>,
     },
     Del {
-        index: usize,
+        from_index: usize,
+        to_index: Option<usize>,
     },
     List {
         limit: Option<usize>,
@@ -84,15 +85,17 @@ impl From<CommandParseError> for std::io::Error {
 fn command_to_vec(cmd: &Command) -> Vec<u8> {
     let s = match cmd {
         Command::List { limit, offset } => match (limit, offset) {
-            (Some(limit), Some(offset)) => format!("list {} {}", limit, offset),
-            (Some(limit), None) => format!("list {}", limit),
+            (Some(limit), offset) => format!("list {} {}", limit, offset.unwrap_or(0)),
             (None, _) => "list".to_string(),
         },
         Command::Count => "count".to_string(),
         Command::Save => "save".to_string(),
         Command::Load => "load".to_string(),
         Command::Add { value } => format!("add -- {}", value.join(" ")),
-        Command::Del { index } => format!("del {}", index),
+        Command::Del {
+            from_index,
+            to_index,
+        } => format!("del {} {}", from_index, to_index.unwrap_or(*from_index)),
         Command::Set { index } => format!("set {}", index),
         Command::Tag { index, tag } => format!("tag {} {}", index, tag),
         Command::Get { index } => format!("get {}", index),
