@@ -397,41 +397,41 @@ async fn handle_call(
     cmd: Command,
     entries: &mut Entries,
 ) -> io::Result<Response> {
-    match cmd {
-        Command::List { offset, limit } => Ok(Response::Data(dump_entries(entries, limit, offset))),
-        Command::Count => Ok(Response::Data(entries.len().to_string())),
+    Ok(match cmd {
+        Command::List { limit, offset } => Response::Data(dump_entries(entries, limit, offset)),
+        Command::Count => Response::Data(entries.len().to_string()),
         Command::Save => {
             save_db(config, entries).await.unwrap();
-            Ok(Response::Ok)
+            Response::Ok
         }
         Command::Load => {
             load_db(config, entries).await.unwrap();
-            Ok(Response::Ok)
+            Response::Ok
         }
         Command::Get { index } => {
             let result = match get_entry_value(index, entries) {
                 Some(val) => val,
                 None => format!("item at {:?} not found", index),
             };
-            Ok(Response::Data(result))
+            Response::Data(result)
         }
         Command::Add { value } => {
             unsafe { set_current_entry(value.join(" ")) };
-            Ok(Response::Ok)
+            Response::Ok
         }
         Command::Insert { filename } => {
             let mut file = File::open(filename).await?;
             let mut buffer = String::new();
             file.read_to_string(&mut buffer).await?;
             unsafe { set_current_entry(buffer) };
-            Ok(Response::Ok)
+            Response::Ok
         }
         Command::Set { index } => {
             if let Some(value) = get_entry_value(index, entries) {
                 unsafe { set_current_entry(value) };
-                Ok(Response::Ok)
+                Response::Ok
             } else {
-                Ok(Response::Data(format!("item at {:?} not found", index)))
+                Response::Data(format!("item at {:?} not found", index))
             }
         }
         Command::Del {
@@ -439,23 +439,22 @@ async fn handle_call(
             to_index,
         } => {
             del_entries(from_index, to_index, entries);
-            Ok(Response::Ok)
+            Response::Ok
         }
         Command::Tag { index, tag } => {
             if let Some(item) = get_entry(index, entries) {
                 item.tags
                     .get_or_insert(HashSet::<String>::new())
                     .insert(tag);
-                Ok(Response::Ok)
+                Response::Ok
             } else {
-                Ok(Response::Data(format!("item at {:?} not found", index)))
+                Response::Data(format!("item at {:?} not found", index))
             }
         }
         Command::Select { value } => {
             if value.len() < 2 {
-                return Ok(Response::Data("invalid args".to_string()));
-            }
-            Ok(if value[0] == "value" {
+                Response::Data("invalid args".to_string())
+            } else if value[0] == "value" {
                 let items = select_entries_by_value(entries, (value[1]).to_string());
                 Response::Data(dump_indexed_items(items))
             } else if value[0] == "tag" {
@@ -463,7 +462,7 @@ async fn handle_call(
                 Response::Data(dump_indexed_items(items))
             } else {
                 Response::Ok
-            })
+            }
         }
 
         Command::Help => {
@@ -481,10 +480,10 @@ async fn handle_call(
   select -- 'value'/'tag' str
   help
   quit";
-            Ok(Response::Data(usage.to_string()))
+            Response::Data(usage.to_string())
         }
-        Command::Quit => Ok(Response::Stop),
-    }
+        Command::Quit => Response::Stop,
+    })
 }
 
 fn main() -> io::Result<()> {
