@@ -1,0 +1,14 @@
+USAGE:
+ list ?limit ?offset
+ count
+ save
+ load
+ add -- str [?str...]
+ del index ?to-index
+ set index
+ tag index tag
+ get index
+ insert filename
+ select -- 'value'/'tag' str
+ help
+ quit

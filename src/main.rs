@@ -1,6 +1,6 @@
+use anyhow::Result;
 use async_std::channel::{bounded, Receiver, Sender};
 use async_std::fs::File;
-use async_std::io;
 use async_std::net::TcpListener;
 use async_std::prelude::*;
 use async_std::task;
@@ -17,7 +17,9 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 mod common;
-use common::{read_command, Args, Command, Config, Request, Response};
+use common::{read_command, Args, Command, Config, Entries, Item, Request, Response, State};
+
+static USAGE: &str = include_str!("usage.txt");
 
 unsafe fn nsstring_to_slice(s: &id) -> &str {
     let bytes = s.UTF8String() as *const u8;
@@ -41,17 +43,6 @@ fn calculate_hash<T: Hash>(v: T) -> u64 {
     let mut h = DefaultHasher::new();
     v.hash(&mut h);
     h.finish()
-}
-
-type Entries = std::collections::BTreeMap<u64, Item>;
-
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
-#[serde(rename_all = "kebab-case")]
-struct Item {
-    value: String,
-    accessed_at: SystemTime,
-    access_counter: u32,
-    tags: Option<HashSet<String>>,
 }
 
 fn _format_item(item: &Item, short: bool) -> String {
@@ -220,7 +211,7 @@ fn shorten(s: &str) -> String {
     short
 }
 
-async fn sync_loop(_config: Arc<Config>, sender: Sender<Request>) {
+async fn sync_loop(_state: Arc<State>, sender: Sender<Request>) {
     let mut last_hash: u64 = 0;
     loop {
         task::sleep(Duration::from_millis(500)).await;
@@ -239,7 +230,7 @@ async fn sync_loop(_config: Arc<Config>, sender: Sender<Request>) {
     }
 }
 
-async fn repl_loop(_config: Arc<Config>, sender: Sender<Request>) {
+async fn repl_loop(_state: Arc<State>, sender: Sender<Request>) {
     let mut rl = Editor::<()>::new().unwrap();
     loop {
         let readline = rl.readline(":> ");
@@ -272,7 +263,7 @@ async fn repl_loop(_config: Arc<Config>, sender: Sender<Request>) {
     }
 }
 
-async fn empty_fg_loop(_config: Arc<Config>, sender: Sender<Request>) {
+async fn empty_fg_loop(_state: Arc<State>, sender: Sender<Request>) {
     let mut rl = Editor::<()>::new().unwrap();
     loop {
         let readline = rl.readline("");
@@ -285,19 +276,19 @@ async fn empty_fg_loop(_config: Arc<Config>, sender: Sender<Request>) {
     }
 }
 
-async fn cmdline_loop(config: Arc<Config>, sender: Sender<Request>) {
-    if !config.interactive.unwrap_or(false) {
-        empty_fg_loop(config, sender).await;
+async fn cmdline_loop(state: Arc<State>, sender: Sender<Request>) {
+    if !state.config.interactive.unwrap_or(false) {
+        empty_fg_loop(state, sender).await;
     } else {
-        repl_loop(config, sender).await;
+        repl_loop(state, sender).await;
     };
 }
 
-async fn net_loop(config: Arc<Config>, sender: Sender<Request>) -> io::Result<()> {
+async fn net_loop(state: Arc<State>, sender: Sender<Request>) -> Result<()> {
     let listen_on = format!(
         "{}:{}",
-        &config.host.as_ref().unwrap(),
-        &config.port.unwrap()
+        &state.config.host.as_ref().unwrap(),
+        &state.config.port.unwrap()
     );
     let listener = TcpListener::bind(listen_on).await?;
 
@@ -307,35 +298,34 @@ async fn net_loop(config: Arc<Config>, sender: Sender<Request>) -> io::Result<()
         let mut stream = stream?;
         let sender = sender.clone();
         task::spawn(async move {
-            let cmd = read_command(&stream).await?;
+            let cmd = read_command(&stream).await.unwrap();
             let (tx, rx) = bounded::<Response>(1);
             sender.send(Request::Command(cmd, tx)).await.unwrap();
             match rx.recv().await {
                 Ok(Response::Data(val)) => {
-                    stream.write_all(val.as_bytes()).await?;
-                    stream.write(b"\n").await?;
+                    stream.write_all(val.as_bytes()).await.unwrap();
+                    stream.write(b"\n").await.unwrap();
                 }
                 Ok(_) | Err(_) => (),
-            }
-            Ok::<(), std::io::Error>(())
+            };
         });
     }
 
     Ok(())
 }
 
-async fn main_loop(config: Arc<Config>, receiver: Receiver<Request>) -> io::Result<()> {
-    let mut entries = Entries::new();
-
+async fn main_loop(state: Arc<State>, receiver: Receiver<Request>) -> Result<()> {
+    let s = state.clone();
     loop {
         if let Ok(msg) = receiver.recv().await {
             match msg {
                 Request::Quit => Response::Stop,
-                Request::Sync(value) => handle_insert(value, &mut entries),
+                Request::Sync(value) => {
+                    let mut entries = s.entries.lock().unwrap();
+                    handle_insert(value, &mut entries)
+                }
                 Request::Command(cmd, sender) => {
-                    let response = handle_call(config.clone(), cmd, &mut entries)
-                        .await
-                        .unwrap();
+                    let response = handle_call(s.clone(), cmd).await.unwrap();
                     match response {
                         Response::Stop => return Ok(()),
                         _ => {
@@ -373,43 +363,48 @@ fn handle_insert(s: String, entries: &mut Entries) -> Response {
         }
     }
 }
-async fn save_db(config: Arc<Config>, entries: &Entries) -> io::Result<()> {
-    let db_path = config.db.as_ref().unwrap();
+async fn save_db(state: Arc<State>) -> Result<()> {
+    let db_path = state.config.db.as_ref().unwrap();
     let mut file = File::create(db_path).await?;
-    let data = serde_lexpr::to_string_custom(entries, serde_lexpr::print::Options::elisp())?;
+    let data = serde_lexpr::to_string_custom(&state.entries, serde_lexpr::print::Options::elisp())?;
     file.write_all(data.as_bytes()).await?;
     Ok(())
 }
 
-async fn load_db(config: Arc<Config>, entries: &mut Entries) -> io::Result<()> {
-    let db_path = config.db.as_ref().unwrap();
+async fn load_db(state: Arc<State>) -> Result<()> {
+    let db_path = state.config.db.as_ref().unwrap();
     let mut file = File::open(db_path).await?;
     let mut buffer = String::new();
     file.read_to_string(&mut buffer).await?;
-    let mut data: Entries =
+    let data: Entries =
         serde_lexpr::from_str_custom(buffer.as_str(), serde_lexpr::parse::Options::elisp())?;
-    entries.append(&mut data);
+    let mut entries = state.entries.lock().unwrap();
+    *entries = data;
+    drop(entries);
     Ok(())
 }
 
-async fn handle_call(
-    config: Arc<Config>,
-    cmd: Command,
-    entries: &mut Entries,
-) -> io::Result<Response> {
-    Ok(match cmd {
-        Command::List { limit, offset } => Response::Data(dump_entries(entries, limit, offset)),
-        Command::Count => Response::Data(entries.len().to_string()),
+async fn handle_call(state: Arc<State>, cmd: Command) -> Result<Response> {
+    let rep = match cmd {
+        Command::List { limit, offset } => {
+            let entries = state.entries.lock().unwrap();
+            Response::Data(dump_entries(&entries, limit, offset))
+        }
+        Command::Count => {
+            let entries = state.entries.lock().unwrap();
+            Response::Data(entries.len().to_string())
+        }
         Command::Save => {
-            save_db(config, entries).await.unwrap();
+            save_db(state.clone()).await.unwrap();
             Response::Ok
         }
         Command::Load => {
-            load_db(config, entries).await.unwrap();
+            load_db(state.clone()).await.unwrap();
             Response::Ok
         }
         Command::Get { index } => {
-            let result = match get_entry_value(index, entries) {
+            let entries = state.entries.lock().unwrap();
+            let result = match get_entry_value(index, &entries) {
                 Some(val) => val,
                 None => format!("item at {:?} not found", index),
             };
@@ -427,7 +422,8 @@ async fn handle_call(
             Response::Ok
         }
         Command::Set { index } => {
-            if let Some(value) = get_entry_value(index, entries) {
+            let entries = state.entries.lock().unwrap();
+            if let Some(value) = get_entry_value(index, &entries) {
                 unsafe { set_current_entry(value) };
                 Response::Ok
             } else {
@@ -438,11 +434,13 @@ async fn handle_call(
             from_index,
             to_index,
         } => {
-            del_entries(from_index, to_index, entries);
+            let mut entries = state.entries.lock().unwrap();
+            del_entries(from_index, to_index, &mut entries);
             Response::Ok
         }
         Command::Tag { index, tag } => {
-            if let Some(item) = get_entry(index, entries) {
+            let mut entries = state.entries.lock().unwrap();
+            if let Some(item) = get_entry(index, &mut entries) {
                 item.tags
                     .get_or_insert(HashSet::<String>::new())
                     .insert(tag);
@@ -452,48 +450,35 @@ async fn handle_call(
             }
         }
         Command::Select { value } => {
+            let entries = state.entries.lock().unwrap();
             if value.len() < 2 {
                 Response::Data("invalid args".to_string())
             } else if value[0] == "value" {
-                let items = select_entries_by_value(entries, (value[1]).to_string());
+                let items = select_entries_by_value(&entries, (value[1]).to_string());
                 Response::Data(dump_indexed_items(items))
             } else if value[0] == "tag" {
-                let items = select_entries_by_tag(entries, (value[1]).to_string());
+                let items = select_entries_by_tag(&entries, (value[1]).to_string());
                 Response::Data(dump_indexed_items(items))
             } else {
                 Response::Ok
             }
         }
 
-        Command::Help => {
-            let usage: &str = "
-  list ?limit ?offset
-  count
-  save
-  load
-  add -- str [?str...]
-  del index ?to-index
-  set index
-  tag index tag
-  get index
-  insert filename
-  select -- 'value'/'tag' str
-  help
-  quit";
-            Response::Data(usage.to_string())
-        }
+        Command::Help => Response::Data(USAGE.to_string()),
         Command::Quit => Response::Stop,
-    })
+    };
+
+    Ok(rep)
 }
 
-fn main() -> io::Result<()> {
+fn main() -> Result<()> {
     let args = Args::parse();
     let config = Config::load_from_args(&args)?;
-
+    let state = Arc::new(State::new(config));
     let (sender, receiver) = bounded::<Request>(1);
-    task::spawn(sync_loop(config.clone(), sender.clone()));
-    task::spawn(net_loop(config.clone(), sender.clone()));
-    task::spawn(cmdline_loop(config.clone(), sender));
-    task::block_on(main_loop(config, receiver))?;
+    task::spawn(sync_loop(state.clone(), sender.clone()));
+    task::spawn(net_loop(state.clone(), sender.clone()));
+    task::spawn(cmdline_loop(state.clone(), sender));
+    task::block_on(main_loop(state, receiver))?;
     Ok(())
 }

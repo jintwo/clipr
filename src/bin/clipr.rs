@@ -1,9 +1,10 @@
-use async_std::{io, net::TcpStream, prelude::*, task};
+use anyhow::Result;
+use async_std::{net::TcpStream, prelude::*, task};
 use clap::Parser;
 use cliprd::common::{write_command, Args, Command, Config, Response};
 use std::sync::Arc;
 
-async fn call(config: Arc<Config>, cmd: Command) -> io::Result<Response> {
+async fn call(config: Arc<Config>, cmd: Command) -> Result<Response> {
     let connect_to = format!(
         "{}:{}",
         &config.host.as_ref().unwrap(),
@@ -27,9 +28,9 @@ fn show_response(response: &Response) {
     }
 }
 
-fn main() -> io::Result<()> {
+fn main() -> Result<()> {
     let args = Args::parse();
-    let config = Config::load_from_args(&args)?;
+    let config = Arc::new(Config::load_from_args(&args)?);
 
     match args.command {
         Some(cmd) => match task::block_on(call(config, cmd)) {

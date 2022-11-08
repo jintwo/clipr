@@ -1,14 +1,15 @@
+use anyhow::Result;
 use async_std::channel::Sender;
-use async_std::io;
 use async_std::net::TcpStream;
 use async_std::prelude::*;
 use clap::{Parser, Subcommand};
 use serde_derive::Deserialize;
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use thiserror::Error;
+use std::sync::Mutex;
+use std::time::SystemTime;
 
 pub const HEADER_LEN: usize = 8;
 
@@ -24,18 +25,6 @@ pub enum Response {
     NewItem(String),
     Ok,
     Stop,
-}
-
-#[derive(Error, Debug)]
-pub enum CommandParseError {
-    #[error("empty command")]
-    EmptyCommand,
-    #[error("invalid command `{0}`")]
-    InvalidCommand(String),
-    #[error("insufficient arguments")]
-    InsufficientArgs,
-    #[error("invalid argument type `{0}`")]
-    InvalidArgType(String),
 }
 
 #[derive(Debug, Subcommand)]
@@ -76,12 +65,6 @@ pub enum Command {
     Quit,
 }
 
-impl From<CommandParseError> for std::io::Error {
-    fn from(cpe: CommandParseError) -> Self {
-        io::Error::new(io::ErrorKind::Other, format!("{:?}", cpe))
-    }
-}
-
 fn command_to_vec(cmd: &Command) -> Vec<u8> {
     let s = match cmd {
         Command::List { limit, offset } => match (limit, offset) {
@@ -120,7 +103,7 @@ impl From<&Command> for Vec<u8> {
     }
 }
 
-pub async fn read_command(stream: &TcpStream) -> io::Result<Command> {
+pub async fn read_command(stream: &TcpStream) -> Result<Command> {
     let mut reader = stream.clone();
 
     // read header
@@ -138,15 +121,11 @@ pub async fn read_command(stream: &TcpStream) -> io::Result<Command> {
     let bin_name = std::env::args().next().unwrap();
     cmd_line.insert(0, bin_name);
 
-    if let Ok(args) = Args::try_parse_from(cmd_line) {
-        let cmd = args.command.unwrap();
-        Ok(cmd)
-    } else {
-        Err(CommandParseError::InvalidCommand(payload.to_string()).into())
-    }
+    let args = Args::try_parse_from(cmd_line)?;
+    Ok(args.command.unwrap())
 }
 
-pub async fn write_command(stream: &mut TcpStream, cmd: Command) -> io::Result<()> {
+pub async fn write_command(stream: &mut TcpStream, cmd: Command) -> Result<()> {
     // encode payload
     let payload: Vec<u8> = cmd.into();
 
@@ -162,12 +141,37 @@ pub async fn write_command(stream: &mut TcpStream, cmd: Command) -> io::Result<(
     Ok(())
 }
 
+#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct Item {
+    pub value: String,
+    pub accessed_at: SystemTime,
+    pub access_counter: u32,
+    pub tags: Option<HashSet<String>>,
+}
+
+pub type Entries = std::collections::BTreeMap<u64, Item>;
+
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub interactive: Option<bool>,
     pub host: Option<String>,
     pub port: Option<u16>,
     pub db: Option<String>,
+}
+
+pub struct State {
+    pub config: Config,
+    pub entries: Mutex<Entries>,
+}
+
+impl State {
+    pub fn new(config: Config) -> Self {
+        Self {
+            config,
+            entries: Mutex::new(Entries::new()),
+        }
+    }
 }
 
 #[derive(Parser, Debug)]
@@ -190,7 +194,7 @@ impl Default for Config {
 }
 
 impl Config {
-    pub fn load_config(filename: &Path) -> io::Result<Config> {
+    pub fn load_config(filename: &Path) -> Result<Config> {
         let mut file = File::open(filename)?;
         let mut buffer = String::new();
         file.read_to_string(&mut buffer)?;
@@ -200,11 +204,11 @@ impl Config {
         Ok(config)
     }
 
-    pub fn load_from_args(args: &Args) -> io::Result<Arc<Self>> {
-        Ok(Arc::new(if let Some(filename) = args.config.as_deref() {
+    pub fn load_from_args(args: &Args) -> Result<Self> {
+        Ok(if let Some(filename) = args.config.as_deref() {
             Self::load_config(filename)?
         } else {
             Self::default()
-        }))
+        })
     }
 }
