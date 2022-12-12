@@ -1,0 +1,12 @@
+[package]
+name = "clipr-emacs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clipr-common = { path = "../clipr-common" }
+emacs = "0.18.0"
+
+[lib]
+name = "clipr"
+crate-type = ["cdylib"]

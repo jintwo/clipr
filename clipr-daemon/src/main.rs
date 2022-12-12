@@ -6,6 +6,7 @@ use async_std::prelude::*;
 use async_std::task;
 use chrono::prelude::*;
 use clap::Parser;
+use clipr_common::{read_command, Args, Command, Config, Entries, Item, Request, Response, State};
 use cocoa::appkit::{NSPasteboard, NSPasteboardTypeString};
 use cocoa::base::{id, nil};
 use cocoa::foundation::NSString;
@@ -15,9 +16,6 @@ use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-
-mod common;
-use common::{read_command, Args, Command, Config, Entries, Item, Request, Response, State};
 
 static USAGE: &str = include_str!("usage.txt");
 

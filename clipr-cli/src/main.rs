@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_std::{net::TcpStream, prelude::*, task};
 use clap::Parser;
-use cliprd::common::{write_command, Args, Command, Config, Response};
+use clipr_common::{write_command, Args, Command, Config, Response};
 use std::sync::Arc;
 
 async fn call(config: Arc<Config>, cmd: Command) -> Result<Response> {
