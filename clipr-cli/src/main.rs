@@ -8,7 +8,7 @@ async fn call(config: Arc<Config>, cmd: Command) -> Result<Response> {
     let connect_to = format!(
         "{}:{}",
         &config.host.as_ref().unwrap(),
-        &config.port.unwrap()
+        &config.raw_port.unwrap()
     );
 
     let mut stream = TcpStream::connect(connect_to).await?;

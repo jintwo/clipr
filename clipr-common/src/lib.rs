@@ -27,6 +27,7 @@ pub enum Response {
     Stop,
 }
 
+// TODO: add json-serde
 #[derive(Debug, Subcommand)]
 pub enum Command {
     Add {
@@ -103,7 +104,29 @@ impl From<&Command> for Vec<u8> {
     }
 }
 
-pub async fn read_command(stream: &TcpStream) -> Result<Command> {
+pub async fn read_raw_command(stream: &TcpStream) -> Result<Command> {
+    let mut reader = stream.clone();
+
+    // read header
+    let mut header: [u8; HEADER_LEN] = [0; HEADER_LEN];
+    reader.read_exact(&mut header).await?;
+    let buf_len = usize::from_le_bytes(header);
+
+    // read payload
+    let mut buf = vec![0u8; buf_len];
+    reader.read_exact(&mut buf).await?;
+    let payload = String::from_utf8_lossy(&buf[..]);
+
+    // parse command
+    let mut cmd_line = shellwords::split(&payload).unwrap();
+    let bin_name = std::env::args().next().unwrap();
+    cmd_line.insert(0, bin_name);
+
+    let args = Args::try_parse_from(cmd_line)?;
+    Ok(args.command.unwrap())
+}
+
+pub async fn read_json_command(stream: &TcpStream) -> Result<Command> {
     let mut reader = stream.clone();
 
     // read header
@@ -156,7 +179,8 @@ pub type Entries = std::collections::BTreeMap<u64, Item>;
 pub struct Config {
     pub interactive: Option<bool>,
     pub host: Option<String>,
-    pub port: Option<u16>,
+    pub raw_port: Option<u16>,
+    pub json_port: Option<u16>,
     pub db: Option<String>,
 }
 
@@ -186,7 +210,8 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             host: Some(String::from("127.0.0.1")),
-            port: Some(8931),
+            raw_port: Some(8931),
+            json_port: Some(8932),
             interactive: Some(true),
             db: Some(String::from("./db.lisp")),
         }
