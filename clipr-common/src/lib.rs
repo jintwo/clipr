@@ -3,7 +3,7 @@ use async_std::channel::Sender;
 use async_std::net::TcpStream;
 use async_std::prelude::*;
 use clap::{Parser, Subcommand};
-use serde_derive::Deserialize;
+use serde_derive::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::prelude::*;
@@ -21,14 +21,24 @@ pub enum Request {
 
 #[derive(Debug)]
 pub enum Response {
-    Data(String),
     NewItem(String),
+    Payload(Payload),
     Ok,
     Stop,
 }
 
-// TODO: add json-serde
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum Payload {
+    Ok,
+    List { value: Vec<(usize, String)> },
+    Value { value: Option<String> },
+    Message { value: String },
+    Stop,
+}
+
+#[derive(Debug, Subcommand, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
 pub enum Command {
     Add {
         #[clap(last = true)]
@@ -101,6 +111,25 @@ impl From<Command> for Vec<u8> {
 impl From<&Command> for Vec<u8> {
     fn from(cmd: &Command) -> Self {
         command_to_vec(cmd)
+    }
+}
+
+impl From<&Payload> for String {
+    fn from(payload: &Payload) -> Self {
+        match payload {
+            Payload::Ok => "ok".to_string(),
+            Payload::Stop => "stop".to_string(),
+            Payload::List { value } => value
+                .iter()
+                .map(|(idx, val)| format!("{}: {}", idx, val))
+                .collect::<Vec<String>>()
+                .join("\n"),
+            Payload::Value { value } => match value {
+                Some(v) => v.to_owned(),
+                _ => "".to_string(),
+            },
+            Payload::Message { value } => value.to_string(),
+        }
     }
 }
 

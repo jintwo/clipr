@@ -18,12 +18,12 @@ async fn call(config: Arc<Config>, cmd: Command) -> Result<Response> {
     let mut buf = String::new();
     stream.read_to_string(&mut buf).await?;
 
-    Ok(Response::Data(buf))
+    Ok(Response::Text(buf))
 }
 
 fn show_response(response: &Response) {
     match response {
-        Response::Data(buf) => println!("{}", buf),
+        Response::Text(buf) => println!("{}", buf),
         _ => println!("..."),
     }
 }

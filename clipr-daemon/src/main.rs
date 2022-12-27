@@ -16,6 +16,8 @@ use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+use tide;
+use tide::prelude::*;
 
 static USAGE: &str = include_str!("usage.txt");
 
@@ -264,7 +266,7 @@ async fn repl_loop(_state: Arc<clipr_common::State>, sender: Sender<clipr_common
                     .await
                     .unwrap();
                 match rx.recv().await {
-                    Ok(clipr_common::Response::Data(val)) => println!("{}", val),
+                    Ok(clipr_common::Response::Payload(val)) => println!("{}", String::from(&val)),
                     Ok(clipr_common::Response::Stop) => return,
                     Ok(_) | Err(_) => continue,
                 }
@@ -319,8 +321,11 @@ async fn raw_net_loop(
                 .await
                 .unwrap();
             match rx.recv().await {
-                Ok(clipr_common::Response::Data(val)) => {
-                    stream.write_all(val.as_bytes()).await.unwrap();
+                Ok(clipr_common::Response::Payload(val)) => {
+                    stream
+                        .write_all(String::from(&val).as_bytes())
+                        .await
+                        .unwrap();
                     stream.write(b"\n").await.unwrap();
                 }
                 Ok(_) | Err(_) => (),
@@ -340,32 +345,27 @@ async fn json_net_loop(
         &state.config.host.as_ref().unwrap(),
         &state.config.json_port.unwrap()
     );
-    let listener = TcpListener::bind(listen_on).await?;
 
-    let mut incoming = listener.incoming();
-
-    while let Some(stream) = incoming.next().await {
-        let mut stream = stream?;
-        let sender = sender.clone();
-        task::spawn(async move {
-            let cmd = clipr_common::read_json_command(&stream).await.unwrap();
+    let mut app = tide::with_state(sender);
+    app.at("/command").post(
+        |mut req: tide::Request<Sender<clipr_common::Request>>| async move {
+            let cmd: clipr_common::Command = req.body_json().await?;
+            let s = req.state();
             let (tx, rx) = bounded::<clipr_common::Response>(1);
-            sender
-                .send(clipr_common::Request::Command(cmd, tx))
+            s.send(clipr_common::Request::Command(cmd, tx))
                 .await
                 .unwrap();
+            // TODO: use json serializer
             match rx.recv().await {
-                Ok(clipr_common::Response::Data(val)) => {
-                    stream.write_all(val.as_bytes()).await.unwrap();
-                    stream.write(b"\n").await.unwrap();
-                }
-                Ok(_) | Err(_) => (),
-            };
-        });
-    }
-
+                Ok(clipr_common::Response::Payload(val)) => Ok(format!("rep: {:?}", val)),
+                Ok(_) | Err(_) => Ok("empty".into()),
+            }
+        },
+    );
+    app.listen(listen_on).await?;
     Ok(())
 }
+
 async fn main_loop(
     state: Arc<clipr_common::State>,
     receiver: Receiver<clipr_common::Request>,
@@ -380,11 +380,14 @@ async fn main_loop(
                     handle_insert(value, &mut entries)
                 }
                 clipr_common::Request::Command(cmd, sender) => {
-                    let response = handle_call(s.clone(), cmd).await.unwrap();
-                    match response {
-                        clipr_common::Response::Stop => return Ok(()),
+                    let payload = handle_call(s.clone(), cmd).await.unwrap();
+                    match payload {
+                        clipr_common::Payload::Stop => return Ok(()),
                         _ => {
-                            sender.send(response).await.unwrap();
+                            sender
+                                .send(clipr_common::Response::Payload(payload))
+                                .await
+                                .unwrap();
                             continue;
                         }
                     }
@@ -442,50 +445,61 @@ async fn load_db(state: Arc<clipr_common::State>) -> Result<()> {
 async fn handle_call(
     state: Arc<clipr_common::State>,
     cmd: clipr_common::Command,
-) -> Result<clipr_common::Response> {
-    let rep = match cmd {
+) -> Result<clipr_common::Payload> {
+    Ok(match cmd {
         clipr_common::Command::List { limit, offset } => {
             let entries = state.entries.lock().unwrap();
-            clipr_common::Response::Data(dump_entries(&entries, limit, offset))
+            let items = _entries_to_indexed_vec(&entries, limit, offset);
+            let offset_val = offset.unwrap_or(0);
+            let result = items
+                .iter()
+                .map(|(idx, item)| (idx + offset_val, _format_item(item, true)))
+                .collect::<Vec<(usize, String)>>();
+            clipr_common::Payload::List { value: result }
         }
         clipr_common::Command::Count => {
             let entries = state.entries.lock().unwrap();
-            clipr_common::Response::Data(entries.len().to_string())
+            clipr_common::Payload::Value {
+                value: Some(entries.len().to_string()),
+            }
         }
         clipr_common::Command::Save => {
             save_db(state.clone()).await.unwrap();
-            clipr_common::Response::Ok
+            clipr_common::Payload::Ok
         }
         clipr_common::Command::Load => {
             load_db(state.clone()).await.unwrap();
-            clipr_common::Response::Ok
+            clipr_common::Payload::Ok
         }
         clipr_common::Command::Get { index } => {
             let entries = state.entries.lock().unwrap();
-            let result = match get_entry_value(index, &entries) {
-                Some(val) => val,
-                None => format!("item at {:?} not found", index),
-            };
-            clipr_common::Response::Data(result)
+            match get_entry_value(index, &entries) {
+                Some(val) => clipr_common::Payload::Value { value: Some(val) },
+                None => clipr_common::Payload::Message {
+                    value: format!("item at {:?} not found", index),
+                },
+            }
         }
         clipr_common::Command::Add { value } => {
             unsafe { set_current_entry(value.join(" ")) };
-            clipr_common::Response::Ok
+            clipr_common::Payload::Ok
         }
         clipr_common::Command::Insert { filename } => {
             let mut file = File::open(filename).await?;
             let mut buffer = String::new();
             file.read_to_string(&mut buffer).await?;
             unsafe { set_current_entry(buffer) };
-            clipr_common::Response::Ok
+            clipr_common::Payload::Ok
         }
         clipr_common::Command::Set { index } => {
             let entries = state.entries.lock().unwrap();
             if let Some(value) = get_entry_value(index, &entries) {
                 unsafe { set_current_entry(value) };
-                clipr_common::Response::Ok
+                clipr_common::Payload::Ok
             } else {
-                clipr_common::Response::Data(format!("item at {:?} not found", index))
+                clipr_common::Payload::Message {
+                    value: format!("item at {:?} not found", index),
+                }
             }
         }
         clipr_common::Command::Del {
@@ -494,7 +508,7 @@ async fn handle_call(
         } => {
             let mut entries = state.entries.lock().unwrap();
             del_entries(from_index, to_index, &mut entries);
-            clipr_common::Response::Ok
+            clipr_common::Payload::Ok
         }
         clipr_common::Command::Tag { index, tag } => {
             let mut entries = state.entries.lock().unwrap();
@@ -502,31 +516,43 @@ async fn handle_call(
                 item.tags
                     .get_or_insert(HashSet::<String>::new())
                     .insert(tag);
-                clipr_common::Response::Ok
+                clipr_common::Payload::Ok
             } else {
-                clipr_common::Response::Data(format!("item at {:?} not found", index))
+                clipr_common::Payload::Message {
+                    value: format!("item at {:?} not found", index),
+                }
             }
         }
         clipr_common::Command::Select { value } => {
             let entries = state.entries.lock().unwrap();
             if value.len() < 2 {
-                clipr_common::Response::Data("invalid args".to_string())
+                clipr_common::Payload::Message {
+                    value: "invalid args".to_string(),
+                }
             } else if value[0] == "value" {
                 let items = select_entries_by_value(&entries, (value[1]).to_string());
-                clipr_common::Response::Data(dump_indexed_items(items))
+                let result = items
+                    .iter()
+                    .map(|(idx, item)| (*idx, _format_item(item, true)))
+                    .collect::<Vec<(usize, String)>>();
+                clipr_common::Payload::List { value: result }
             } else if value[0] == "tag" {
                 let items = select_entries_by_tag(&entries, (value[1]).to_string());
-                clipr_common::Response::Data(dump_indexed_items(items))
+                let result = items
+                    .iter()
+                    .map(|(idx, item)| (*idx, _format_item(item, true)))
+                    .collect::<Vec<(usize, String)>>();
+                clipr_common::Payload::List { value: result }
             } else {
-                clipr_common::Response::Ok
+                clipr_common::Payload::Ok
             }
         }
 
-        clipr_common::Command::Help => clipr_common::Response::Data(USAGE.to_string()),
-        clipr_common::Command::Quit => clipr_common::Response::Stop,
-    };
-
-    Ok(rep)
+        clipr_common::Command::Help => clipr_common::Payload::Message {
+            value: USAGE.to_string(),
+        },
+        clipr_common::Command::Quit => clipr_common::Payload::Stop,
+    })
 }
 
 fn main() -> Result<()> {
