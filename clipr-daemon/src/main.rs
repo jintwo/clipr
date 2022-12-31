@@ -4,9 +4,7 @@ use async_std::fs::File;
 use async_std::net::TcpListener;
 use async_std::prelude::*;
 use async_std::task;
-use chrono::prelude::*;
 use clap::Parser;
-use clipr_common;
 use cocoa::appkit::{NSPasteboard, NSPasteboardTypeString};
 use cocoa::base::{id, nil};
 use cocoa::foundation::NSString;
@@ -16,8 +14,9 @@ use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tide;
+use tide::log;
 use tide::prelude::*;
+use tide::Body;
 
 static USAGE: &str = include_str!("usage.txt");
 
@@ -45,32 +44,6 @@ fn calculate_hash<T: Hash>(v: T) -> u64 {
     h.finish()
 }
 
-fn _format_item(item: &clipr_common::Item, short: bool) -> String {
-    let val = if short {
-        shorten(&item.value)
-    } else {
-        item.value.clone()
-    };
-
-    let tags = match &item.tags {
-        Some(tags) => tags
-            .iter()
-            .map(|v| v.as_str())
-            .collect::<Vec<&str>>()
-            .join(","),
-        None => "".to_string(),
-    };
-
-    let dt: DateTime<Local> = item.accessed_at.into();
-
-    format!(
-        "{:<64} #[{:<16}] @[{:<10}] ",
-        val,
-        tags,
-        dt.format("%d-%m-%Y")
-    )
-}
-
 fn _entries_to_indexed_vec(
     entries: &clipr_common::Entries,
     limit: Option<usize>,
@@ -89,34 +62,6 @@ fn _entries_to_indexed_vec(
         .skip(offset.unwrap_or(0))
         .take(limit.unwrap_or(items_count))
         .collect()
-}
-
-fn dump_entries(
-    entries: &clipr_common::Entries,
-    limit: Option<usize>,
-    offset: Option<usize>,
-) -> String {
-    let items = _entries_to_indexed_vec(entries, limit, offset);
-
-    items
-        .iter()
-        .map(|(idx, item)| {
-            format!(
-                "{:?}: {}",
-                idx + offset.unwrap_or(0),
-                _format_item(item, true)
-            )
-        })
-        .collect::<Vec<String>>()
-        .join("\n")
-}
-
-fn dump_indexed_items(items: Vec<(usize, &clipr_common::Item)>) -> String {
-    items
-        .iter()
-        .map(|(idx, item)| format!("{:?}: {}", idx, _format_item(item, true)))
-        .collect::<Vec<String>>()
-        .join("\n")
 }
 
 fn get_entry_value(idx: usize, entries: &clipr_common::Entries) -> Option<String> {
@@ -150,23 +95,37 @@ fn get_entry(idx: usize, entries: &mut clipr_common::Entries) -> Option<&mut cli
         None
     }
 }
+fn select_entries(
+    entries: &clipr_common::Entries,
+    limit: Option<usize>,
+    offset: Option<usize>,
+) -> Vec<(usize, clipr_common::Item)> {
+    let items = _entries_to_indexed_vec(entries, limit, offset);
+    let offset_val = offset.unwrap_or(0);
+
+    items
+        .into_iter()
+        .map(|(idx, item)| ((idx + offset_val), item.clone()))
+        .collect()
+}
 
 fn select_entries_by_value(
     entries: &clipr_common::Entries,
     value: String,
-) -> Vec<(usize, &clipr_common::Item)> {
+) -> Vec<(usize, clipr_common::Item)> {
     let items = _entries_to_indexed_vec(entries, None, None);
 
     items
         .into_iter()
         .filter(|(_, item)| item.value.contains(value.as_str()))
+        .map(|(idx, item)| (idx, item.clone()))
         .collect()
 }
 
 fn select_entries_by_tag(
     entries: &clipr_common::Entries,
     tag: String,
-) -> Vec<(usize, &clipr_common::Item)> {
+) -> Vec<(usize, clipr_common::Item)> {
     let items = _entries_to_indexed_vec(entries, None, None);
 
     items
@@ -178,50 +137,11 @@ fn select_entries_by_tag(
                 false
             }
         })
+        .map(|(idx, item)| (idx, item.clone()))
         .collect()
 }
 
-fn _has_newlines(s: &str) -> Option<usize> {
-    s.as_bytes()
-        .iter()
-        .enumerate()
-        .find(|&(_, c)| *c == b'\n')
-        .map(|(i, _)| i)
-}
-
-const MAX_LEN: usize = 64;
-const SPACER_LEN: usize = 4;
-const PREFIX_LEN: usize = 16;
-
-fn shorten(s: &str) -> String {
-    let chars = s.chars();
-    let length = s.chars().count();
-
-    // TODO:
-    // 0. if has length > 64 -> S[0...PREFIX_LEN]...S[-PREFIX_LEN...]
-    // 1. if has whitespaces until prefix-len -> S[0...PREFIX_LEN]...
-    // 2. if has whitespaces after spacer -> S[0...PREFIX_LEN]...
-
-    let mut short = if length > MAX_LEN {
-        chars.enumerate().fold(String::new(), |acc, (i, c)| {
-            if i < PREFIX_LEN || i > length - PREFIX_LEN {
-                format!("{acc}{c}")
-            } else if i > PREFIX_LEN && i < (PREFIX_LEN + SPACER_LEN) {
-                format!("{acc}.")
-            } else {
-                acc
-            }
-        })
-    } else {
-        chars.collect::<String>()
-    };
-
-    let newline_offset = _has_newlines(short.as_str()).unwrap_or(short.len());
-    short.replace_range(newline_offset.., "...");
-    short
-}
-
-async fn sync_loop(_state: Arc<clipr_common::State>, sender: Sender<clipr_common::Request>) {
+async fn clipboard_sync(_state: Arc<clipr_common::State>, sender: Sender<clipr_common::Request>) {
     let mut last_hash: u64 = 0;
     loop {
         task::sleep(Duration::from_millis(500)).await;
@@ -260,15 +180,13 @@ async fn repl_loop(_state: Arc<clipr_common::State>, sender: Sender<clipr_common
                     Ok(args) => args.command.unwrap(),
                     Err(_) => clipr_common::Command::Help,
                 };
-                let (tx, rx) = bounded::<clipr_common::Response>(1);
-                sender
-                    .send(clipr_common::Request::Command(cmd, tx))
-                    .await
-                    .unwrap();
-                match rx.recv().await {
-                    Ok(clipr_common::Response::Payload(val)) => println!("{}", String::from(&val)),
-                    Ok(clipr_common::Response::Stop) => return,
-                    Ok(_) | Err(_) => continue,
+
+                match clipr_common::Request::send_cmd(&sender, cmd).await {
+                    Some(clipr_common::Response::Stop) => return,
+                    Some(clipr_common::Response::Payload(val)) => {
+                        println!("{}", String::from(&val))
+                    }
+                    _ => continue,
                 }
             }
             Err(_) => sender.send(clipr_common::Request::Quit).await.unwrap(),
@@ -297,7 +215,7 @@ async fn cmdline_loop(state: Arc<clipr_common::State>, sender: Sender<clipr_comm
     };
 }
 
-async fn raw_net_loop(
+async fn raw_server(
     state: Arc<clipr_common::State>,
     sender: Sender<clipr_common::Request>,
 ) -> Result<()> {
@@ -315,20 +233,15 @@ async fn raw_net_loop(
         let sender = sender.clone();
         task::spawn(async move {
             let cmd = clipr_common::read_raw_command(&stream).await.unwrap();
-            let (tx, rx) = bounded::<clipr_common::Response>(1);
-            sender
-                .send(clipr_common::Request::Command(cmd, tx))
-                .await
-                .unwrap();
-            match rx.recv().await {
-                Ok(clipr_common::Response::Payload(val)) => {
-                    stream
-                        .write_all(String::from(&val).as_bytes())
-                        .await
-                        .unwrap();
-                    stream.write(b"\n").await.unwrap();
-                }
-                Ok(_) | Err(_) => (),
+
+            if let Some(clipr_common::Response::Payload(val)) =
+                clipr_common::Request::send_cmd(&sender, cmd).await
+            {
+                stream
+                    .write_all(String::from(&val).as_bytes())
+                    .await
+                    .unwrap();
+                stream.write(b"\n").await.unwrap();
             };
         });
     }
@@ -336,7 +249,7 @@ async fn raw_net_loop(
     Ok(())
 }
 
-async fn json_net_loop(
+async fn http_server(
     state: Arc<clipr_common::State>,
     sender: Sender<clipr_common::Request>,
 ) -> Result<()> {
@@ -345,20 +258,18 @@ async fn json_net_loop(
         &state.config.host.as_ref().unwrap(),
         &state.config.json_port.unwrap()
     );
-
     let mut app = tide::with_state(sender);
     app.at("/command").post(
         |mut req: tide::Request<Sender<clipr_common::Request>>| async move {
+            // TODO: handle invalid command properly
             let cmd: clipr_common::Command = req.body_json().await?;
-            let s = req.state();
-            let (tx, rx) = bounded::<clipr_common::Response>(1);
-            s.send(clipr_common::Request::Command(cmd, tx))
-                .await
-                .unwrap();
+
+            let sender = req.state();
+
             // TODO: use json serializer
-            match rx.recv().await {
-                Ok(clipr_common::Response::Payload(val)) => Ok(format!("rep: {:?}", val)),
-                Ok(_) | Err(_) => Ok("empty".into()),
+            match clipr_common::Request::send_cmd(sender, cmd).await {
+                Some(clipr_common::Response::Payload(val)) => Body::from_json(&val),
+                _ => Body::from_json(&json!({})),
             }
         },
     );
@@ -366,7 +277,7 @@ async fn json_net_loop(
     Ok(())
 }
 
-async fn main_loop(
+async fn event_loop(
     state: Arc<clipr_common::State>,
     receiver: Receiver<clipr_common::Request>,
 ) -> Result<()> {
@@ -449,13 +360,8 @@ async fn handle_call(
     Ok(match cmd {
         clipr_common::Command::List { limit, offset } => {
             let entries = state.entries.lock().unwrap();
-            let items = _entries_to_indexed_vec(&entries, limit, offset);
-            let offset_val = offset.unwrap_or(0);
-            let result = items
-                .iter()
-                .map(|(idx, item)| (idx + offset_val, _format_item(item, true)))
-                .collect::<Vec<(usize, String)>>();
-            clipr_common::Payload::List { value: result }
+            let items = select_entries(&entries, limit, offset);
+            clipr_common::Payload::List { value: items }
         }
         clipr_common::Command::Count => {
             let entries = state.entries.lock().unwrap();
@@ -531,18 +437,10 @@ async fn handle_call(
                 }
             } else if value[0] == "value" {
                 let items = select_entries_by_value(&entries, (value[1]).to_string());
-                let result = items
-                    .iter()
-                    .map(|(idx, item)| (*idx, _format_item(item, true)))
-                    .collect::<Vec<(usize, String)>>();
-                clipr_common::Payload::List { value: result }
+                clipr_common::Payload::List { value: items }
             } else if value[0] == "tag" {
                 let items = select_entries_by_tag(&entries, (value[1]).to_string());
-                let result = items
-                    .iter()
-                    .map(|(idx, item)| (*idx, _format_item(item, true)))
-                    .collect::<Vec<(usize, String)>>();
-                clipr_common::Payload::List { value: result }
+                clipr_common::Payload::List { value: items }
             } else {
                 clipr_common::Payload::Ok
             }
@@ -556,14 +454,18 @@ async fn handle_call(
 }
 
 fn main() -> Result<()> {
+    env_logger::init();
+
+    log::info!("hello!");
+
     let args = clipr_common::Args::parse();
     let config = clipr_common::Config::load_from_args(&args)?;
     let state = Arc::new(clipr_common::State::new(config));
     let (sender, receiver) = bounded::<clipr_common::Request>(1);
-    task::spawn(sync_loop(state.clone(), sender.clone()));
-    task::spawn(raw_net_loop(state.clone(), sender.clone()));
-    task::spawn(json_net_loop(state.clone(), sender.clone()));
+    task::spawn(clipboard_sync(state.clone(), sender.clone()));
+    task::spawn(raw_server(state.clone(), sender.clone()));
+    task::spawn(http_server(state.clone(), sender.clone()));
     task::spawn(cmdline_loop(state.clone(), sender));
-    task::block_on(main_loop(state, receiver))?;
+    task::block_on(event_loop(state, receiver))?;
     Ok(())
 }

@@ -1,7 +1,8 @@
 use anyhow::Result;
-use async_std::channel::Sender;
+use async_std::channel::{bounded, Sender};
 use async_std::net::TcpStream;
 use async_std::prelude::*;
+use chrono::prelude::*;
 use clap::{Parser, Subcommand};
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -19,7 +20,16 @@ pub enum Request {
     Quit,
 }
 
-#[derive(Debug)]
+impl Request {
+    pub async fn send_cmd(sender: &Sender<Request>, cmd: Command) -> Option<Response> {
+        let (tx, rx) = bounded::<Response>(1);
+        sender.send(Request::Command(cmd, tx)).await.unwrap();
+        rx.recv().await.ok()
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
 pub enum Response {
     NewItem(String),
     Payload(Payload),
@@ -28,10 +38,10 @@ pub enum Response {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[serde(tag = "type", rename_all = "kebab-case")]
 pub enum Payload {
     Ok,
-    List { value: Vec<(usize, String)> },
+    List { value: Vec<(usize, Item)> },
     Value { value: Option<String> },
     Message { value: String },
     Stop,
@@ -114,6 +124,72 @@ impl From<&Command> for Vec<u8> {
     }
 }
 
+fn _format_item(item: &Item, short: bool) -> String {
+    let val = if short {
+        shorten(&item.value)
+    } else {
+        item.value.clone()
+    };
+
+    let tags = match &item.tags {
+        Some(tags) => tags
+            .iter()
+            .map(|v| v.as_str())
+            .collect::<Vec<&str>>()
+            .join(","),
+        None => "".to_string(),
+    };
+
+    let dt: DateTime<Local> = item.accessed_at.into();
+
+    format!(
+        "{:<64} #[{:<16}] @[{:<10}] ",
+        val,
+        tags,
+        dt.format("%d-%m-%Y")
+    )
+}
+
+fn _has_newlines(s: &str) -> Option<usize> {
+    s.as_bytes()
+        .iter()
+        .enumerate()
+        .find(|&(_, c)| *c == b'\n')
+        .map(|(i, _)| i)
+}
+
+const MAX_LEN: usize = 64;
+const SPACER_LEN: usize = 4;
+const PREFIX_LEN: usize = 16;
+
+fn shorten(s: &str) -> String {
+    let chars = s.chars();
+    let length = s.chars().count();
+
+    // TODO:
+    // 0. if has length > 64 -> S[0...PREFIX_LEN]...S[-PREFIX_LEN...]
+    // 1. if has whitespaces until prefix-len -> S[0...PREFIX_LEN]...
+    // 2. if has whitespaces after spacer -> S[0...PREFIX_LEN]...
+
+    let mut short = if length > MAX_LEN {
+        chars.enumerate().fold(String::new(), |acc, (i, c)| {
+            if i < PREFIX_LEN || i > length - PREFIX_LEN {
+                format!("{acc}{c}")
+            } else if i > PREFIX_LEN && i < (PREFIX_LEN + SPACER_LEN) {
+                format!("{acc}.")
+            } else {
+                acc
+            }
+        })
+    } else {
+        chars.collect::<String>()
+    };
+
+    let newline_offset = _has_newlines(short.as_str()).unwrap_or(short.len());
+    short.replace_range(newline_offset.., "...");
+    short
+}
+
 impl From<&Payload> for String {
     fn from(payload: &Payload) -> Self {
         match payload {
@@ -121,7 +197,7 @@ impl From<&Payload> for String {
             Payload::Stop => "stop".to_string(),
             Payload::List { value } => value
                 .iter()
-                .map(|(idx, val)| format!("{}: {}", idx, val))
+                .map(|(idx, val)| format!("{}: {:?}", idx, _format_item(val, true)))
                 .collect::<Vec<String>>()
                 .join("\n"),
             Payload::Value { value } => match value {
@@ -193,7 +269,7 @@ pub async fn write_command(stream: &mut TcpStream, cmd: Command) -> Result<()> {
     Ok(())
 }
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Item {
     pub value: String,
