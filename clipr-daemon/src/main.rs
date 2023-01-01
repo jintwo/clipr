@@ -14,7 +14,6 @@ use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tide::log;
 use tide::prelude::*;
 use tide::Body;
 
@@ -266,7 +265,6 @@ async fn http_server(
 
             let sender = req.state();
 
-            // TODO: use json serializer
             match clipr_common::Request::send_cmd(sender, cmd).await {
                 Some(clipr_common::Response::Payload(val)) => Body::from_json(&val),
                 _ => Body::from_json(&json!({})),
@@ -455,9 +453,6 @@ async fn handle_call(
 
 fn main() -> Result<()> {
     env_logger::init();
-
-    log::info!("hello!");
-
     let args = clipr_common::Args::parse();
     let config = clipr_common::Config::load_from_args(&args)?;
     let state = Arc::new(clipr_common::State::new(config));

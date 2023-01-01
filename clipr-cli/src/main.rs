@@ -1,31 +1,19 @@
-use anyhow::Result;
-use async_std::{net::TcpStream, prelude::*, task};
+use anyhow::{bail, Result};
+use async_std::task;
 use clap::Parser;
-use clipr_common::{write_command, Args, Command, Config, Response};
+use clipr_common::{Args, Command, Config, Payload};
 use std::sync::Arc;
 
-async fn call(config: Arc<Config>, cmd: Command) -> Result<Response> {
+async fn call(config: Arc<Config>, cmd: Command) -> Result<Payload, surf::Error> {
     let connect_to = format!(
         "{}:{}",
         &config.host.as_ref().unwrap(),
-        &config.raw_port.unwrap()
+        &config.json_port.unwrap()
     );
-
-    let mut stream = TcpStream::connect(connect_to).await?;
-
-    write_command(&mut stream, cmd).await?;
-
-    let mut buf = String::new();
-    stream.read_to_string(&mut buf).await?;
-
-    Ok(Response::Text(buf))
-}
-
-fn show_response(response: &Response) {
-    match response {
-        Response::Text(buf) => println!("{}", buf),
-        _ => println!("..."),
-    }
+    let uri = format!("http://{}/command", connect_to);
+    let req = surf::post(uri).body_json(&cmd)?;
+    let rep: Payload = req.recv_json().await?;
+    Ok(rep)
 }
 
 fn main() -> Result<()> {
@@ -34,11 +22,11 @@ fn main() -> Result<()> {
 
     match args.command {
         Some(cmd) => match task::block_on(call(config, cmd)) {
-            Ok(response) => {
-                show_response(&response);
+            Ok(payload) => {
+                println!("{}", String::from(&payload));
                 Ok(())
             }
-            Err(err) => Err(err),
+            Err(err) => bail!(err),
         },
         None => Ok(()),
     }

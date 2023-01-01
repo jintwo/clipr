@@ -197,7 +197,7 @@ impl From<&Payload> for String {
             Payload::Stop => "stop".to_string(),
             Payload::List { value } => value
                 .iter()
-                .map(|(idx, val)| format!("{}: {:?}", idx, _format_item(val, true)))
+                .map(|(idx, val)| format!("{}: {}", idx, _format_item(val, true)))
                 .collect::<Vec<String>>()
                 .join("\n"),
             Payload::Value { value } => match value {
