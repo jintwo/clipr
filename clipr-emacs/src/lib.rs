@@ -13,7 +13,7 @@ fn init(env: &Env) -> Result<Value<'_>> {
 // Define a function callable by Lisp code.
 #[defun]
 fn say_hello(env: &Env, name: String) -> Result<Value<'_>> {
-    env.message(&format!("Hello, {}!", name))
+    env.message(format!("Hello, {name}!"))
 }
 
 // #[defun]

@@ -1,7 +1,6 @@
 use anyhow::Result;
 use async_std::channel::{bounded, Receiver, Sender};
 use async_std::fs::File;
-use async_std::net::TcpListener;
 use async_std::prelude::*;
 use async_std::task;
 use clap::Parser;
@@ -214,40 +213,6 @@ async fn cmdline_loop(state: Arc<clipr_common::State>, sender: Sender<clipr_comm
     };
 }
 
-async fn raw_server(
-    state: Arc<clipr_common::State>,
-    sender: Sender<clipr_common::Request>,
-) -> Result<()> {
-    let listen_on = format!(
-        "{}:{}",
-        &state.config.host.as_ref().unwrap(),
-        &state.config.raw_port.unwrap()
-    );
-    let listener = TcpListener::bind(listen_on).await?;
-
-    let mut incoming = listener.incoming();
-
-    while let Some(stream) = incoming.next().await {
-        let mut stream = stream?;
-        let sender = sender.clone();
-        task::spawn(async move {
-            let cmd = clipr_common::read_raw_command(&stream).await.unwrap();
-
-            if let Some(clipr_common::Response::Payload(val)) =
-                clipr_common::Request::send_cmd(&sender, cmd).await
-            {
-                stream
-                    .write_all(String::from(&val).as_bytes())
-                    .await
-                    .unwrap();
-                stream.write(b"\n").await.unwrap();
-            };
-        });
-    }
-
-    Ok(())
-}
-
 async fn http_server(
     state: Arc<clipr_common::State>,
     sender: Sender<clipr_common::Request>,
@@ -255,7 +220,7 @@ async fn http_server(
     let listen_on = format!(
         "{}:{}",
         &state.config.host.as_ref().unwrap(),
-        &state.config.json_port.unwrap()
+        &state.config.port.unwrap()
     );
     let mut app = tide::with_state(sender);
     app.at("/command").post(
@@ -380,7 +345,7 @@ async fn handle_call(
             match get_entry_value(index, &entries) {
                 Some(val) => clipr_common::Payload::Value { value: Some(val) },
                 None => clipr_common::Payload::Message {
-                    value: format!("item at {:?} not found", index),
+                    value: format!("item at {index:?} not found"),
                 },
             }
         }
@@ -402,7 +367,7 @@ async fn handle_call(
                 clipr_common::Payload::Ok
             } else {
                 clipr_common::Payload::Message {
-                    value: format!("item at {:?} not found", index),
+                    value: format!("item at {index:?} not found"),
                 }
             }
         }
@@ -423,7 +388,7 @@ async fn handle_call(
                 clipr_common::Payload::Ok
             } else {
                 clipr_common::Payload::Message {
-                    value: format!("item at {:?} not found", index),
+                    value: format!("item at {index:?} not found"),
                 }
             }
         }
@@ -458,7 +423,6 @@ fn main() -> Result<()> {
     let state = Arc::new(clipr_common::State::new(config));
     let (sender, receiver) = bounded::<clipr_common::Request>(1);
     task::spawn(clipboard_sync(state.clone(), sender.clone()));
-    task::spawn(raw_server(state.clone(), sender.clone()));
     task::spawn(http_server(state.clone(), sender.clone()));
     task::spawn(cmdline_loop(state.clone(), sender));
     task::block_on(event_loop(state, receiver))?;

@@ -1,5 +1,4 @@
 host = "127.0.0.1"
-raw_port = 1513
-json_port = 1515
+port = 1515
 interactive = true
 db = "./db.lisp"

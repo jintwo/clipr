@@ -7,7 +7,7 @@ async fn call(config: Arc<Config>, cmd: Command) -> Result<Payload, surf::Error>
     let uri = format!(
         "http://{}:{}/command",
         &config.host.as_ref().unwrap(),
-        &config.json_port.unwrap()
+        &config.port.unwrap()
     );
     let req = surf::post(uri).body_json(&cmd)?;
     let rep: Payload = req.recv_json().await?;
