@@ -1,8 +1,16 @@
 // use async_std::{net::TcpStream, prelude::*, task};
-use emacs::{defun, Env, Result, Value};
+use anyhow::bail;
+use clap::Parser;
+use clipr_common::{format_item, shorten, Args, Command, Config, Payload};
+use emacs::IntoLisp;
+use emacs::{Env, Result, Value};
+use std::path::Path;
+use std::sync::Arc;
 
 // Emacs won't load the module without this.
 emacs::plugin_is_GPL_compatible!();
+
+static DEFAULT_CONFIG_PATH: &str = "~/config/clipr.toml";
 
 // Register the initialization hook that Emacs will call when it loads the module.
 #[emacs::module]
@@ -10,26 +18,73 @@ fn init(env: &Env) -> Result<Value<'_>> {
     env.message("Done loading!")
 }
 
-// Define a function callable by Lisp code.
-#[defun]
-fn say_hello(env: &Env, name: String) -> Result<Value<'_>> {
-    env.message(format!("Hello, {name}!"))
+fn get_config_path(env: &Env) -> emacs::Result<emacs::Value<'_>> {
+    let var = env.intern("clipr-config-path")?;
+    let is_bound: bool = env.call("boundp", [var])?.is_not_nil();
+    if !is_bound {
+        return Ok(DEFAULT_CONFIG_PATH.to_string().into_lisp(env)?);
+    }
+
+    let config_path: String = env
+        .call("symbol-value", [var])?
+        .into_rust::<String>()
+        .unwrap_or(DEFAULT_CONFIG_PATH.to_string());
+
+    Ok(config_path.into_lisp(env)?)
 }
 
-// #[defun]
-// fn call(env: &Env, cmd: String) -> Result<Value<'_>> {
-//     let connect_to = format!(
-//         "{}:{}",
-//         &config.host.as_ref().unwrap(),
-//         &config.port.unwrap()
-//     );
+fn payload_to_lisp<'a>(payload: &Payload, env: &'a Env) -> emacs::Result<emacs::Value<'a>> {
+    match payload {
+        Payload::Ok => "ok".to_string().into_lisp(env),
+        Payload::Stop => "stop".to_string().into_lisp(env),
+        Payload::List { value } => {
+            let id = env.intern(":id")?;
+            let content = env.intern(":content")?;
+            let tags = env.intern(":tags")?;
+            let date = env.intern(":date")?;
 
-//     let mut stream = TcpStream::connect(connect_to).await?;
+            let mut result: Vec<emacs::Value> = vec![];
 
-//     write_command(&mut stream, cmd).await?;
+            for (idx, item) in value.iter() {
+                let v = env.list((id, *idx, content, shorten(&item.value)))?;
+                result.push(v);
+            }
 
-//     let mut buf = String::new();
-//     stream.read_to_string(&mut buf).await?;
+            Ok(env.list(result.as_slice())?)
+        }
+        Payload::Value { value } => match value {
+            Some(v) => v.to_string().into_lisp(env),
+            _ => "".to_string().into_lisp(env),
+        },
+        Payload::Message { value } => value.to_string().into_lisp(env),
+    }
+}
 
-//     Ok(Response::Data(buf))
-// }
+// Define a function callable by Lisp code.
+#[emacs::defun]
+fn cmd(env: &Env, value: String) -> emacs::Result<emacs::Value<'_>> {
+    let config_path = get_config_path(env)?.into_rust::<String>()?;
+    let config = Arc::new(Config::load_config(Path::new(&config_path))?);
+    let mut cmd_line = shellwords::split(value.as_str()).unwrap();
+    cmd_line.insert(0, "$bin_name".to_string());
+
+    let cmd = match clipr_common::Args::try_parse_from(cmd_line) {
+        Ok(args) => args.command.unwrap(),
+        Err(_) => clipr_common::Command::Help,
+    };
+
+    match async_std::task::block_on(call(config, cmd)) {
+        Ok(payload) => payload_to_lisp(&payload, env),
+        Err(err) => bail!(err),
+    }
+
+    // TODO:
+    // 4. use emacs table interface (see chuck plugin) [id, short-val, tags, date]
+}
+
+async fn call(config: Arc<Config>, cmd: Command) -> anyhow::Result<Payload, surf::Error> {
+    let uri = format!("http://{}/command", config.listen_on());
+    let req = surf::post(uri).body_json(&cmd)?;
+    let rep: Payload = req.recv_json().await?;
+    Ok(rep)
+}

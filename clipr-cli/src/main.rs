@@ -4,11 +4,7 @@ use clipr_common::{Args, Command, Config, Payload};
 use std::sync::Arc;
 
 async fn call(config: Arc<Config>, cmd: Command) -> Result<Payload, surf::Error> {
-    let uri = format!(
-        "http://{}:{}/command",
-        &config.host.as_ref().unwrap(),
-        &config.port.unwrap()
-    );
+    let uri = format!("http://{}/command", config.listen_on());
     let req = surf::post(uri).body_json(&cmd)?;
     let rep: Payload = req.recv_json().await?;
     Ok(rep)

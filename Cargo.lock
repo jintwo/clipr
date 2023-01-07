@@ -564,8 +564,13 @@ dependencies = [
 name = "clipr-emacs"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "async-std",
+ "clap",
  "clipr-common",
  "emacs",
+ "shellwords",
+ "surf",
 ]
 
 [[package]]

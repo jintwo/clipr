@@ -84,7 +84,7 @@ pub enum Command {
     Quit,
 }
 
-fn _format_item(item: &Item, short: bool) -> String {
+pub fn format_item(item: &Item, short: bool) -> String {
     let val = if short {
         shorten(&item.value)
     } else {
@@ -122,7 +122,7 @@ const MAX_LEN: usize = 64;
 const SPACER_LEN: usize = 4;
 const PREFIX_LEN: usize = 16;
 
-fn shorten(s: &str) -> String {
+pub fn shorten(s: &str) -> String {
     let chars = s.chars();
     let length = s.chars().count();
 
@@ -157,7 +157,7 @@ impl From<&Payload> for String {
             Payload::Stop => "stop".to_string(),
             Payload::List { value } => value
                 .iter()
-                .map(|(idx, val)| format!("{}: {}", idx, _format_item(val, true)))
+                .map(|(idx, val)| format!("{}: {}", idx, format_item(val, true)))
                 .collect::<Vec<String>>()
                 .join("\n"),
             Payload::Value { value } => match value {
@@ -186,6 +186,12 @@ pub struct Config {
     pub host: Option<String>,
     pub port: Option<u16>,
     pub db: Option<String>,
+}
+
+impl Config {
+    pub fn listen_on(&self) -> String {
+        format!("{}:{}", self.host.as_ref().unwrap(), self.port.unwrap())
+    }
 }
 
 pub struct State {

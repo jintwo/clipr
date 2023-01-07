@@ -217,11 +217,6 @@ async fn http_server(
     state: Arc<clipr_common::State>,
     sender: Sender<clipr_common::Request>,
 ) -> Result<()> {
-    let listen_on = format!(
-        "{}:{}",
-        &state.config.host.as_ref().unwrap(),
-        &state.config.port.unwrap()
-    );
     let mut app = tide::with_state(sender);
     app.at("/command").post(
         |mut req: tide::Request<Sender<clipr_common::Request>>| async move {
@@ -236,7 +231,7 @@ async fn http_server(
             }
         },
     );
-    app.listen(listen_on).await?;
+    app.listen(state.config.listen_on()).await?;
     Ok(())
 }
 
