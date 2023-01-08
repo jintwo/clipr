@@ -38,7 +38,7 @@ fn payload_to_lisp<'a>(payload: &Payload, env: &'a Env) -> emacs::Result<emacs::
         Payload::Ok => "ok".to_string().into_lisp(env),
         Payload::Stop => "stop".to_string().into_lisp(env),
         Payload::List { value } => {
-            let id = env.intern(":id")?;
+            let pos = env.intern(":pos")?;
             let content = env.intern(":content")?;
             let tags = env.intern(":tags")?;
             let date = env.intern(":date")?;
@@ -46,7 +46,7 @@ fn payload_to_lisp<'a>(payload: &Payload, env: &'a Env) -> emacs::Result<emacs::
             let mut result: Vec<emacs::Value> = vec![];
 
             for (idx, item) in value.iter() {
-                let v = env.list((id, *idx, content, shorten(&item.value)))?;
+                let v = env.list((pos, *idx, content, shorten(&item.value)))?;
                 result.push(v);
             }
 

@@ -24,13 +24,17 @@ cargo build --lib clipr-emacs && target/debug/libclipr.dylib <emacs-load-path>/c
 cp clipr-emacs/src/clipr-mode.el <emacs-load-path>/
 ```
 
-## Tasks [0/3]
+## Tasks [0/5]
+
+* [ ] Fix CLI
 
 * [ ] Pinned entries
 
 * [ ] Masked entries
 
 * [ ] Deadline timeout (for sensitive data)
+
+* [ ] LaunchD plist
 
 ## Bugs [0/1]
 
