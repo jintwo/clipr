@@ -1,0 +1,30 @@
+#+TITLE: Clipr - command line clipboard (pasteboard) manager
+
+#+begin_quote
+Simple MacOS clipboard (pasteboard) manager with cli and emacs interfaces. Under development.
+#+end_quote
+
+* Running
+#+begin_quote
+server:
+  cargo run --bin clipr-daemon -- -c config.toml
+
+cli:
+  cargo run --bin clipr-cli -- -c config.toml <command>
+
+emacs-module:
+  cargo build --lib clipr-emacs && target/debug/libclipr.dylib <emacs-load-path>/clipr.so
+  cp clipr-emacs/src/clipr-mode.el <emacs-load-path>/
+#+end_quote
+
+* Tasks [0/3]
+
+** TODO [#A] pinned entries
+
+** TODO [#B] masked entries
+
+** TODO [#C] with deadline timeout (for sensitive data)
+
+* Bugs [0/1]
+
+** TODO Leaking
