@@ -27,18 +27,16 @@
   "Create Clipr."
   (let* ((clipr-buffer (get-buffer-create clipr-buffer-name))
          (buffer-window (get-buffer-window clipr-buffer)))
-    (if buffer-window
-        (display-buffer clipr-buffer)
-      (let ((new-window (split-window-below)))
-        (set-window-buffer new-window clipr-buffer)
+    (when (not buffer-window)
         (with-current-buffer clipr-buffer
-          (funcall 'clipr-mode))))))
+          (funcall 'clipr-mode)))
+    (display-buffer clipr-buffer)))
 
 (defun clipr-kill ()
   "Kill Clipr."
   (interactive)
   (with-current-buffer clipr-buffer-name
-    (kill-buffer-and-window)))
+    (kill-buffer)))
 
 (defun clipr-refresh ()
   "Refresh Clipr."
