@@ -39,9 +39,16 @@ pub enum Response {
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum Payload {
     Ok,
-    List { value: Vec<(usize, Item)> },
-    Value { value: Option<String> },
-    Message { value: String },
+    List {
+        value: Vec<(usize, Item)>,
+        preview_length: Option<usize>,
+    },
+    Value {
+        value: Option<String>,
+    },
+    Message {
+        value: String,
+    },
     Stop,
 }
 
@@ -59,6 +66,7 @@ pub enum Command {
     List {
         limit: Option<usize>,
         offset: Option<usize>,
+        preview_length: Option<usize>,
     },
     Get {
         index: usize,
@@ -84,9 +92,9 @@ pub enum Command {
     Quit,
 }
 
-pub fn format_item(item: &Item, short: bool) -> String {
+pub fn format_item(item: &Item, short: bool, preview_length: Option<usize>) -> String {
     let val = if short {
-        shorten(&item.value)
+        shorten(&item.value, preview_length)
     } else {
         item.value.clone()
     };
@@ -101,9 +109,10 @@ pub fn format_item(item: &Item, short: bool) -> String {
     };
 
     let dt: DateTime<Local> = item.accessed_at.into();
+    let max_len = preview_length.unwrap_or(MAX_LEN);
 
     format!(
-        "{:<64} #[{:<16}] @[{:<10}] ",
+        "{:<max_len$} #[{:<16}] @[{:<10}] ",
         val,
         tags,
         dt.format("%d-%m-%Y")
@@ -118,20 +127,21 @@ fn _has_newlines(s: &str) -> Option<usize> {
         .map(|(i, _)| i)
 }
 
-const MAX_LEN: usize = 64;
+pub const MAX_LEN: usize = 64;
 const SPACER_LEN: usize = 4;
 const PREFIX_LEN: usize = 16;
 
-pub fn shorten(s: &str) -> String {
+pub fn shorten(s: &str, max_len: Option<usize>) -> String {
     let chars = s.chars();
     let length = s.chars().count();
+    let max_len = max_len.unwrap_or(MAX_LEN);
 
     // TODO:
-    // 0. if has length > 64 -> S[0...PREFIX_LEN]...S[-PREFIX_LEN...]
+    // 0. if has length > MAX_LEN -> S[0...PREFIX_LEN]...S[-PREFIX_LEN...]
     // 1. if has whitespaces until prefix-len -> S[0...PREFIX_LEN]...
     // 2. if has whitespaces after spacer -> S[0...PREFIX_LEN]...
 
-    let mut short = if length > MAX_LEN {
+    let mut short = if length > max_len {
         chars.enumerate().fold(String::new(), |acc, (i, c)| {
             if i < PREFIX_LEN || i > length - PREFIX_LEN {
                 format!("{acc}{c}")
@@ -146,8 +156,12 @@ pub fn shorten(s: &str) -> String {
     };
 
     let newline_offset = _has_newlines(short.as_str()).unwrap_or(short.len());
-    short.replace_range(newline_offset.., "...");
-    short
+    let rest = short.split_off(newline_offset);
+    if rest.chars().find(|c| !c.is_whitespace()).is_some() {
+        format!("{short}...")
+    } else {
+        format!("{short}")
+    }
 }
 
 impl From<&Payload> for String {
@@ -155,9 +169,12 @@ impl From<&Payload> for String {
         match payload {
             Payload::Ok => "ok".to_string(),
             Payload::Stop => "stop".to_string(),
-            Payload::List { value } => value
+            Payload::List {
+                value,
+                preview_length,
+            } => value
                 .iter()
-                .map(|(idx, val)| format!("{}: {}", idx, format_item(val, true)))
+                .map(|(idx, val)| format!("{}: {}", idx, format_item(val, true, *preview_length)))
                 .collect::<Vec<String>>()
                 .join("\n"),
             Payload::Value { value } => match value {

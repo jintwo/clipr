@@ -52,14 +52,12 @@ fn _entries_to_indexed_vec(
     items.sort_by_key(|i| i.accessed_at);
     items.reverse();
 
-    let items_count = items.len();
+    let it = items.into_iter().enumerate().skip(offset.unwrap_or(0));
 
-    items
-        .into_iter()
-        .enumerate()
-        .skip(offset.unwrap_or(0))
-        .take(limit.unwrap_or(items_count))
-        .collect()
+    match limit {
+        Some(limit) if limit > 0 => it.take(limit).collect(),
+        _ => it.collect(),
+    }
 }
 
 fn get_entry_value(idx: usize, entries: &clipr_common::Entries) -> Option<String> {
@@ -316,10 +314,17 @@ async fn handle_call(
     cmd: clipr_common::Command,
 ) -> Result<clipr_common::Payload> {
     Ok(match cmd {
-        clipr_common::Command::List { limit, offset } => {
+        clipr_common::Command::List {
+            limit,
+            offset,
+            preview_length,
+        } => {
             let entries = state.entries.lock().unwrap();
             let items = select_entries(&entries, limit, offset);
-            clipr_common::Payload::List { value: items }
+            clipr_common::Payload::List {
+                value: items,
+                preview_length,
+            }
         }
         clipr_common::Command::Count => {
             let entries = state.entries.lock().unwrap();
@@ -395,10 +400,16 @@ async fn handle_call(
                 }
             } else if value[0] == "value" {
                 let items = select_entries_by_value(&entries, (value[1]).to_string());
-                clipr_common::Payload::List { value: items }
+                clipr_common::Payload::List {
+                    value: items,
+                    preview_length: None,
+                }
             } else if value[0] == "tag" {
                 let items = select_entries_by_tag(&entries, (value[1]).to_string());
-                clipr_common::Payload::List { value: items }
+                clipr_common::Payload::List {
+                    value: items,
+                    preview_length: None,
+                }
             } else {
                 clipr_common::Payload::Ok
             }

@@ -18,6 +18,11 @@
   :type 'string
   :group 'clipr)
 
+(defcustom clipr-item-preview-length 128
+  "Clipr item preview lingth."
+  :type 'integer
+  :group 'clipr)
+
 (defconst clipr-list-format
   [("Pos" 7 t)
    ("Content" 35 t)]
@@ -30,7 +35,7 @@
     (when (not buffer-window)
         (with-current-buffer clipr-buffer
           (funcall 'clipr-mode)))
-    (display-buffer clipr-buffer)))
+    (select-window (display-buffer clipr-buffer))))
 
 (defun clipr-kill ()
   "Kill Clipr."
@@ -52,8 +57,9 @@
      (let ((pos (plist-get entry :pos))
            (content (plist-get entry :content)))
        (list pos (vector (number-to-string pos) content))))
-   (clipr-cmd "list")))
+   (clipr-cmd (string-join (list "list" "0" "0" (number-to-string clipr-item-preview-length)) " "))))
 
+(string-join (list "a" "b"))
 (defvar clipr-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "d") 'clipr-delete)

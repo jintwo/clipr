@@ -1,7 +1,7 @@
 // use async_std::{net::TcpStream, prelude::*, task};
 use anyhow::bail;
 use clap::Parser;
-use clipr_common::{format_item, shorten, Args, Command, Config, Payload};
+use clipr_common::{shorten, Args, Command, Config, Payload};
 use emacs::IntoLisp;
 use emacs::{Env, Result, Value};
 use std::path::Path;
@@ -37,7 +37,10 @@ fn payload_to_lisp<'a>(payload: &Payload, env: &'a Env) -> emacs::Result<emacs::
     match payload {
         Payload::Ok => "ok".to_string().into_lisp(env),
         Payload::Stop => "stop".to_string().into_lisp(env),
-        Payload::List { value } => {
+        Payload::List {
+            value,
+            preview_length,
+        } => {
             let pos = env.intern(":pos")?;
             let content = env.intern(":content")?;
             let tags = env.intern(":tags")?;
@@ -46,7 +49,7 @@ fn payload_to_lisp<'a>(payload: &Payload, env: &'a Env) -> emacs::Result<emacs::
             let mut result: Vec<emacs::Value> = vec![];
 
             for (idx, item) in value.iter() {
-                let v = env.list((pos, *idx, content, shorten(&item.value)))?;
+                let v = env.list((pos, *idx, content, shorten(&item.value, *preview_length)))?;
                 result.push(v);
             }
 
