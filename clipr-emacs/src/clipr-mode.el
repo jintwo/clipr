@@ -25,7 +25,8 @@
 
 (defconst clipr-list-format
   [("Pos" 7 t)
-   ("Content" 35 t)]
+   ("Tags" 16 t)
+   ("Content" 35 nil)]
   "Clipr list format.")
 
 (defun clipr-create ()
@@ -55,11 +56,11 @@
   (-map
    (lambda (entry)
      (let ((pos (plist-get entry :pos))
-           (content (plist-get entry :content)))
-       (list pos (vector (number-to-string pos) content))))
+           (content (plist-get entry :content))
+           (tags (plist-get entry :tags)))
+       (list pos (vector (number-to-string pos) tags content))))
    (clipr-cmd (string-join (list "list" "0" "0" (number-to-string clipr-item-preview-length)) " "))))
 
-(string-join (list "a" "b"))
 (defvar clipr-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "d") 'clipr-delete)

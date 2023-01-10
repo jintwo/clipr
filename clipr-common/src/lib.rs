@@ -157,10 +157,10 @@ pub fn shorten(s: &str, max_len: Option<usize>) -> String {
 
     let newline_offset = _has_newlines(short.as_str()).unwrap_or(short.len());
     let rest = short.split_off(newline_offset);
-    if rest.chars().find(|c| !c.is_whitespace()).is_some() {
+    if rest.chars().any(|c| !c.is_whitespace()) {
         format!("{short}...")
     } else {
-        format!("{short}")
+        short.to_string()
     }
 }
 

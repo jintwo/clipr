@@ -22,7 +22,7 @@ fn get_config_path(env: &Env) -> emacs::Result<emacs::Value<'_>> {
     let var = env.intern("clipr-config-path")?;
     let is_bound: bool = env.call("boundp", [var])?.is_not_nil();
     if !is_bound {
-        return Ok(DEFAULT_CONFIG_PATH.to_string().into_lisp(env)?);
+        return DEFAULT_CONFIG_PATH.to_string().into_lisp(env);
     }
 
     let config_path: String = env
@@ -30,7 +30,7 @@ fn get_config_path(env: &Env) -> emacs::Result<emacs::Value<'_>> {
         .into_rust::<String>()
         .unwrap_or(DEFAULT_CONFIG_PATH.to_string());
 
-    Ok(config_path.into_lisp(env)?)
+    config_path.into_lisp(env)
 }
 
 fn payload_to_lisp<'a>(payload: &Payload, env: &'a Env) -> emacs::Result<emacs::Value<'a>> {
@@ -49,7 +49,20 @@ fn payload_to_lisp<'a>(payload: &Payload, env: &'a Env) -> emacs::Result<emacs::
             let mut result: Vec<emacs::Value> = vec![];
 
             for (idx, item) in value.iter() {
-                let v = env.list((pos, *idx, content, shorten(&item.value, *preview_length)))?;
+                let item_tags = if let Some(tags) = &item.tags {
+                    tags.iter().cloned().collect::<Vec<String>>().join(":")
+                } else {
+                    "".to_string()
+                };
+
+                let v = env.list((
+                    pos,
+                    *idx,
+                    content,
+                    shorten(&item.value, *preview_length),
+                    tags,
+                    item_tags,
+                ))?;
                 result.push(v);
             }
 
