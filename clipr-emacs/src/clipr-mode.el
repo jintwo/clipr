@@ -45,19 +45,6 @@
           (funcall 'clipr-mode)))
     (select-window (display-buffer clipr-buffer))))
 
-(defun clipr-kill ()
-  "Kill Clipr."
-  (interactive)
-  (with-current-buffer clipr-buffer-name
-    (kill-buffer)))
-
-(defun clipr-refresh ()
-  "Refresh Clipr."
-  (interactive)
-  (with-current-buffer clipr-buffer-name
-    (tabulated-list-print :remember-pos)
-    (hl-line-highlight)))
-
 (defun clipr-list-entries ()
   "Get entries for Clipr."
   (-map
@@ -73,42 +60,25 @@
                   (cons content `(face font-lock-comment-face action ,clipr--default-action))))))
    (clipr-cmd clipr--query-cmd)))
 
-(defvar clipr-mode-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "d") 'clipr-delete)
-    (define-key map (kbd "g") 'clipr-refresh)
-    (define-key map (kbd "RET") 'clipr-select-and-quit)
-    (define-key map (kbd "q") 'clipr-kill)
-    (define-key map (kbd "+") 'clipr-tag)
-    (define-key map (kbd "-") 'clipr-untag)
-    (define-key map (kbd "t") 'clipr-filter-by-tag)
-    (define-key map (kbd "c") 'clipr-filter-clear)
-    (define-key map (kbd "S") 'clipr-save)
-    (define-key map (kbd "L") 'clipr-load)
-    map)
-  "Keymap for Clipr.")
+(defun clipr--read-tag ()
+  (let ((tags (string-split (car (aref (tabulated-list-get-entry) 2)) ":")))
+    (list (completing-read "Tag: " tags))))
 
-(defun clipr-load ()
-  "Load entries from DB."
+(defun clipr--read-all-tags ()
+  (let ((tags (string-split (clipr-cmd "tags") ":")))
+    (list (completing-read "Tag: " tags))))
+
+(defun clipr-show ()
+  "Show Clipr."
   (interactive)
-  (clipr-cmd "load")
-  (clipr-refresh)
-  (message "State loaded."))
+  (clipr-create))
 
-
-(defun clipr-save ()
-  "Save entries to DB."
+(defun clipr-refresh ()
+  "Refresh Clipr."
   (interactive)
-  (clipr-cmd "save")
-  (clipr-refresh)
-  (message "State saved."))
-
-
-(defun clipr-delete ()
-  "Delete selected entry."
-  (interactive)
-  (clipr-cmd (format "del %d" (tabulated-list-get-id)))
-  (clipr-refresh))
+  (with-current-buffer clipr-buffer-name
+    (tabulated-list-print :remember-pos)
+    (hl-line-highlight)))
 
 (defun clipr-select ()
   "Copy selected entry to clipboard."
@@ -123,9 +93,17 @@
   (clipr-select)
   (clipr-kill))
 
-(defun clipr--read-tag ()
-  (let ((tags (string-split (car (aref (tabulated-list-get-entry) 2)) ":")))
-    (list (completing-read "Tag: " tags))))
+(defun clipr-delete ()
+  "Delete selected entry."
+  (interactive)
+  (clipr-cmd (format "del %d" (tabulated-list-get-id)))
+  (clipr-refresh))
+
+(defun clipr-kill ()
+  "Kill Clipr."
+  (interactive)
+  (with-current-buffer clipr-buffer-name
+    (kill-buffer)))
 
 (defun clipr-tag (tag)
   "Tag selected entry."
@@ -138,10 +116,6 @@
   (interactive (clipr--read-tag))
   (clipr-cmd (format "untag %d %s" (tabulated-list-get-id) tag))
   (clipr-refresh))
-
-(defun clipr--read-all-tags ()
-  (let ((tags (string-split (clipr-cmd "tags") ":")))
-    (list (completing-read "Tag: " tags))))
 
 (defun clipr-filter-by-tag (tag)
   "Filter entries by tag"
@@ -157,6 +131,53 @@
   (setq clipr--query-cmd clipr--default-query-cmd)
   (clipr-refresh))
 
+(defun clipr-save ()
+  "Save entries to DB."
+  (interactive)
+  (clipr-cmd "save")
+  (clipr-refresh)
+  (message "State saved."))
+
+(defun clipr-load ()
+  "Load entries from DB."
+  (interactive)
+  (clipr-cmd "load")
+  (clipr-refresh)
+  (message "State loaded."))
+
+(defcustom clipr-edit-buffer-name "Clipr Edit"
+  "Clipr edit buffer name."
+  :type 'string
+  :group 'clipr-edit)
+
+(defun clipr-edit ()
+  (interactive)
+  (let* ((tags (string-split (car (aref (tabulated-list-get-entry) 2)) ":"))
+         (content (clipr-cmd (format "get %d" (tabulated-list-get-id))))
+         (clipr-edit-buffer (get-buffer-create clipr-edit-buffer-name))
+         (buffer-window (get-buffer-window clipr-edit-buffer))
+         (new-window (or buffer-window (split-window-below))))
+    (set-window-buffer new-window clipr-edit-buffer)
+    (with-current-buffer clipr-edit-buffer
+      (insert content)
+      (funcall 'clipr-edit-mode))))
+
+(defvar clipr-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "g") 'clipr-refresh)
+    (define-key map (kbd "RET") 'clipr-select-and-quit)
+    (define-key map (kbd "d") 'clipr-delete)
+    (define-key map (kbd "q") 'clipr-kill)
+    (define-key map (kbd "+") 'clipr-tag)
+    (define-key map (kbd "-") 'clipr-untag)
+    (define-key map (kbd "t") 'clipr-filter-by-tag)
+    (define-key map (kbd "c") 'clipr-filter-clear)
+    (define-key map (kbd "S") 'clipr-save)
+    (define-key map (kbd "L") 'clipr-load)
+    (define-key map (kbd "E") 'clipr-edit)
+    map)
+  "Keymap for Clipr.")
+
 (define-derived-mode clipr-mode tabulated-list-mode "Clipr"
   (buffer-disable-undo)
   (kill-all-local-variables)
@@ -170,10 +191,30 @@
   (tabulated-list-print)
   (hl-line-mode 1))
 
-(defun clipr-show ()
-  "Show Clipr."
+(defun clipr-insert ()
   (interactive)
-  (clipr-create))
+  (let ((buf (buffer-string)))
+    (with-temp-file "/tmp/.cliprb"
+      (insert buf))
+    (clipr-cmd "insert /tmp/.cliprb")
+    (clipr-refresh)
+    (clipr-edit-kill)))
+
+(defun clipr-edit-kill ()
+  (interactive)
+  (with-current-buffer clipr-edit-buffer-name
+    (kill-buffer-and-window)))
+
+(defvar clipr-edit-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c C-c") 'clipr-insert)
+    (define-key map (kbd "C-c C-k") 'clipr-edit-kill)
+    map)
+  "Keymap for Clipr Edit.")
+
+(define-derived-mode clipr-edit-mode text-mode "Clipr Edit"
+  (kill-all-local-variables)
+  (use-local-map clipr-edit-mode-map))
 
 (provide 'clipr-mode)
 ;;; clipr-mode.el ends here
