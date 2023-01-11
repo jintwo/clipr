@@ -81,6 +81,10 @@ pub enum Command {
         index: usize,
         tag: String,
     },
+    Untag {
+        index: usize,
+        tag: String,
+    },
     Count,
     Save,
     Load,

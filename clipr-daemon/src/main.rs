@@ -392,6 +392,20 @@ async fn handle_call(
                 }
             }
         }
+        clipr_common::Command::Untag { index, tag } => {
+            let mut entries = state.entries.lock().unwrap();
+            if let Some(item) = get_entry(index, &mut entries) {
+                match item.tags.as_mut() {
+                    Some(ts) => ts.remove(&tag),
+                    _ => true,
+                };
+                clipr_common::Payload::Ok
+            } else {
+                clipr_common::Payload::Message {
+                    value: format!("item at {index:?} not found"),
+                }
+            }
+        }
         clipr_common::Command::Select { value } => {
             let entries = state.entries.lock().unwrap();
             if value.len() < 2 {

@@ -68,6 +68,8 @@
     (define-key map (kbd "C") 'clipr-select)
     (define-key map (kbd "RET") 'clipr-select-and-quit)
     (define-key map (kbd "q") 'clipr-kill)
+    (define-key map (kbd "+") 'clipr-tag)
+    (define-key map (kbd "-") 'clipr-untag)
     map)
   "Keymap for Clipr.")
 
@@ -88,6 +90,23 @@
   (interactive)
   (clipr-select)
   (clipr-kill))
+
+(defun clipr--read-tag ()
+  (let ((tags (string-split (aref (tabulated-list-get-entry) 1) ":")))
+    (list (completing-read "Tag: " tags))))
+
+(defun clipr-tag (tag)
+  "Tag selected entry."
+  (interactive (clipr--read-tag))
+  (clipr-cmd (format "tag %d %s" (tabulated-list-get-id) tag))
+  (clipr-refresh))
+
+(defun clipr-untag (tag)
+  "Untag selected entry."
+  (interactive (clipr--read-tag))
+  (clipr-cmd (format "untag %d %s" (tabulated-list-get-id) tag))
+  (clipr-refresh))
+
 
 (define-derived-mode clipr-mode tabulated-list-mode "Clipr"
   (buffer-disable-undo)
