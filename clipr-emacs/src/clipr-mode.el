@@ -18,6 +18,11 @@
   :type 'string
   :group 'clipr)
 
+(defcustom clipr-edit-temp-file "/tmp/.cliprb"
+  "Clipr Edit temp file path."
+  :type 'string
+  :group 'clipr)
+
 (defcustom clipr-item-preview-length 128
   "Clipr item preview lingth."
   :type 'integer
@@ -148,7 +153,7 @@
 (defcustom clipr-edit-buffer-name "Clipr Edit"
   "Clipr edit buffer name."
   :type 'string
-  :group 'clipr-edit)
+  :group 'clipr)
 
 (defun clipr-edit ()
   (interactive)
@@ -160,7 +165,8 @@
     (set-window-buffer new-window clipr-edit-buffer)
     (with-current-buffer clipr-edit-buffer
       (insert content)
-      (funcall 'clipr-edit-mode))))
+      (clipr-edit-mode))
+    (select-window (display-buffer clipr-edit-buffer))))
 
 (defvar clipr-mode-map
   (let ((map (make-sparse-keymap)))
@@ -194,10 +200,12 @@
 (defun clipr-insert ()
   (interactive)
   (let ((buf (buffer-string)))
-    (with-temp-file "/tmp/.cliprb"
+    (with-temp-file clipr-edit-temp-file
       (insert buf))
-    (clipr-cmd "insert /tmp/.cliprb")
-    (clipr-refresh)
+    (clipr-cmd (format "insert %s" clipr-edit-temp-file))
+    (run-with-timer 0.3 nil (lambda ()
+                              (with-current-buffer clipr-buffer-name
+                                (tabulated-list-print nil t))))
     (clipr-edit-kill)))
 
 (defun clipr-edit-kill ()
