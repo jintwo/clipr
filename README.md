@@ -27,14 +27,23 @@ cp clipr-emacs/src/clipr-mode.el <emacs-load-path>/
 #### Keys
 
 <kbd>d</kbd> - delete entry
+
 <kbd>g</kbd> - refresh
+
 <kbd>RET</kbd> - select
+
 <kbd>q</kbd> - quit
+
 <kbd>+</kbd> - add tag
+
 <kbd>-</kbd> - delete tag
+
 <kbd>t</kbd> - set filter by tag
+
 <kbd>c</kbd> - clear filter
+
 <kbd>S</kbd> - save state
+
 <kbd>L</kbd> - load state
 
 ## Tasks [0/4]
