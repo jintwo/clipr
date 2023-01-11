@@ -85,6 +85,7 @@ pub enum Command {
         index: usize,
         tag: String,
     },
+    Tags,
     Count,
     Save,
     Load,
@@ -104,11 +105,11 @@ pub fn format_item(item: &Item, short: bool, preview_length: Option<usize>) -> S
     };
 
     let tags = match &item.tags {
-        Some(tags) => tags
-            .iter()
-            .map(|v| v.as_str())
-            .collect::<Vec<&str>>()
-            .join(","),
+        Some(tags) => {
+            let mut ts = tags.iter().map(|v| v.as_str()).collect::<Vec<&str>>();
+            ts.sort();
+            ts.join(",")
+        }
         None => "".to_string(),
     };
 

@@ -137,6 +137,17 @@ fn select_entries_by_tag(
         .collect()
 }
 
+fn get_entries_tags(entries: &clipr_common::Entries) -> HashSet<String> {
+    let items: Vec<&clipr_common::Item> = entries.values().collect();
+    let mut result: HashSet<String> = HashSet::new();
+    for item in items {
+        if let Some(tags) = item.tags.as_ref() {
+            result = result.union(tags).cloned().collect();
+        }
+    }
+    result
+}
+
 async fn clipboard_sync(_state: Arc<clipr_common::State>, sender: Sender<clipr_common::Request>) {
     let mut last_hash: u64 = 0;
     loop {
@@ -426,6 +437,15 @@ async fn handle_call(
                 }
             } else {
                 clipr_common::Payload::Ok
+            }
+        }
+        clipr_common::Command::Tags => {
+            let entries = state.entries.lock().unwrap();
+            let tags = get_entries_tags(&entries);
+            let mut ts = tags.into_iter().collect::<Vec<String>>();
+            ts.sort();
+            clipr_common::Payload::Value {
+                value: Some(ts.join(":")),
             }
         }
 

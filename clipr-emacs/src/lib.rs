@@ -1,5 +1,6 @@
 // use async_std::{net::TcpStream, prelude::*, task};
 use anyhow::bail;
+use chrono::prelude::*;
 use clap::Parser;
 use clipr_common::{shorten, Args, Command, Config, Payload};
 use emacs::IntoLisp;
@@ -50,10 +51,16 @@ fn payload_to_lisp<'a>(payload: &Payload, env: &'a Env) -> emacs::Result<emacs::
 
             for (idx, item) in value.iter() {
                 let item_tags = if let Some(tags) = &item.tags {
-                    tags.iter().cloned().collect::<Vec<String>>().join(":")
+                    let mut ts = tags.iter().cloned().collect::<Vec<String>>();
+                    ts.sort();
+                    ts.join(":")
                 } else {
                     "".to_string()
                 };
+
+                let item_date: String = DateTime::<Local>::from(item.accessed_at)
+                    .format("%d-%m-%Y")
+                    .to_string();
 
                 let v = env.list((
                     pos,
@@ -62,6 +69,8 @@ fn payload_to_lisp<'a>(payload: &Payload, env: &'a Env) -> emacs::Result<emacs::
                     shorten(&item.value, *preview_length),
                     tags,
                     item_tags,
+                    date,
+                    item_date,
                 ))?;
                 result.push(v);
             }

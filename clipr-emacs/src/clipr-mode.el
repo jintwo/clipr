@@ -25,9 +25,16 @@
 
 (defconst clipr-list-format
   [("Pos" 7 t)
+   ("Date" 13 t)
    ("Tags" 16 t)
    ("Content" 35 nil)]
   "Clipr list format.")
+
+(defconst clipr--default-query-cmd (string-join (list "list" "0" "0" (number-to-string clipr-item-preview-length)) " "))
+
+(defconst clipr--default-action 'clipr-select-and-quit)
+
+(defvar clipr--query-cmd clipr--default-query-cmd)
 
 (defun clipr-create ()
   "Create Clipr."
@@ -57,19 +64,25 @@
    (lambda (entry)
      (let ((pos (plist-get entry :pos))
            (content (plist-get entry :content))
-           (tags (plist-get entry :tags)))
-       (list pos (vector (number-to-string pos) tags content))))
-   (clipr-cmd (string-join (list "list" "0" "0" (number-to-string clipr-item-preview-length)) " "))))
+           (tags (plist-get entry :tags))
+           (date (plist-get entry :date)))
+       (list pos (vector
+                  (cons (number-to-string pos) `(face default action ,clipr--default-action))
+                  (cons date `(face default action ,clipr--default-action))
+                  (cons tags `(face bold action ,clipr--default-action))
+                  (cons content `(face font-lock-comment-face action ,clipr--default-action))))))
+   (clipr-cmd clipr--query-cmd)))
 
 (defvar clipr-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "d") 'clipr-delete)
     (define-key map (kbd "g") 'clipr-refresh)
-    (define-key map (kbd "C") 'clipr-select)
     (define-key map (kbd "RET") 'clipr-select-and-quit)
     (define-key map (kbd "q") 'clipr-kill)
     (define-key map (kbd "+") 'clipr-tag)
     (define-key map (kbd "-") 'clipr-untag)
+    (define-key map (kbd "t") 'clipr-filter-by-tag)
+    (define-key map (kbd "c") 'clipr-filter-clear)
     map)
   "Keymap for Clipr.")
 
@@ -82,17 +95,18 @@
 (defun clipr-select ()
   "Copy selected entry to clipboard."
   (interactive)
-  (clipr-cmd (format "set %d" (tabulated-list-get-id)))
-  (pulse-momentary-highlight-one-line))
+  (let ((cmd (format "set %d" (tabulated-list-get-id))))
+    (clipr-cmd cmd)
+    (pulse-momentary-highlight-one-line)))
 
-(defun clipr-select-and-quit ()
+(defun clipr-select-and-quit (arg)
   "Copy selected entry to clipboard."
   (interactive)
   (clipr-select)
   (clipr-kill))
 
 (defun clipr--read-tag ()
-  (let ((tags (string-split (aref (tabulated-list-get-entry) 1) ":")))
+  (let ((tags (string-split (car (aref (tabulated-list-get-entry) 2)) ":")))
     (list (completing-read "Tag: " tags))))
 
 (defun clipr-tag (tag)
@@ -107,6 +121,23 @@
   (clipr-cmd (format "untag %d %s" (tabulated-list-get-id) tag))
   (clipr-refresh))
 
+(defun clipr--read-all-tags ()
+  (let ((tags (string-split (clipr-cmd "tags") ":")))
+    (list (completing-read "Tag: " tags))))
+
+(defun clipr-filter-by-tag (tag)
+  "Filter entries by tag"
+  (interactive (clipr--read-all-tags))
+  (if (> (length tag) 0)
+      (setq clipr--query-cmd (format "select -- tag '%s'" tag))
+    (setq clipr--query-cmd clipr--default-query-cmd))
+  (clipr-refresh))
+
+(defun clipr-filter-clear ()
+  "Clear filter"
+  (interactive)
+  (setq clipr--query-cmd clipr--default-query-cmd)
+  (clipr-refresh))
 
 (define-derived-mode clipr-mode tabulated-list-mode "Clipr"
   (buffer-disable-undo)
