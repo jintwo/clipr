@@ -83,8 +83,26 @@
     (define-key map (kbd "-") 'clipr-untag)
     (define-key map (kbd "t") 'clipr-filter-by-tag)
     (define-key map (kbd "c") 'clipr-filter-clear)
+    (define-key map (kbd "S") 'clipr-save)
+    (define-key map (kbd "L") 'clipr-load)
     map)
   "Keymap for Clipr.")
+
+(defun clipr-load ()
+  "Load entries from DB."
+  (interactive)
+  (clipr-cmd "load")
+  (clipr-refresh)
+  (message "State loaded."))
+
+
+(defun clipr-save ()
+  "Save entries to DB."
+  (interactive)
+  (clipr-cmd "save")
+  (clipr-refresh)
+  (message "State saved."))
+
 
 (defun clipr-delete ()
   "Delete selected entry."
