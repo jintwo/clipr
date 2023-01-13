@@ -44,6 +44,8 @@ cp clipr-emacs/src/clipr-mode.el <emacs-load-path>/
 
 <kbd>c</kbd> - clear filter
 
+<kbd>j</kbd> - jump to tag
+
 <kbd>S</kbd> - save state
 
 <kbd>L</kbd> - load state
