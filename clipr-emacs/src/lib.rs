@@ -1,8 +1,7 @@
-// use async_std::{net::TcpStream, prelude::*, task};
 use anyhow::bail;
 use chrono::prelude::*;
 use clap::Parser;
-use clipr_common::{shorten, Args, Command, Config, Payload};
+use clipr_common::{shorten, Command, Config, Payload};
 use emacs::IntoLisp;
 use emacs::{Env, Result, Value};
 use std::path::Path;

@@ -1,2 +1,13 @@
 [workspace]
 members = ["clipr-common", "clipr-daemon", "clipr-cli", "clipr-emacs"]
+
+[workspace.dependencies]
+anyhow = "1.0.58"
+async-std = { version = "1.12.0", features = ["attributes"] }
+clap = { version = "3.2.14", features = ["derive"] }
+chrono = "0.4.22"
+shellwords = "1.1.0"
+surf = "2.3.2"
+toml = "0.5.9"
+serde = { version = "1.0.149", features = ["derive"] }
+serde-lexpr = "0.1.2"

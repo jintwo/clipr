@@ -2,7 +2,7 @@ use anyhow::Result;
 use async_std::channel::{bounded, Sender};
 use chrono::prelude::*;
 use clap::{Parser, Subcommand};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::prelude::*;
