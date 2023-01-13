@@ -139,7 +139,8 @@
 (defun clipr-jump-to-tag (tag)
   "Jump to tag"
   (interactive (clipr--read-all-tags))
-  (goto-line (plist-get (car (clipr-cmd (format "select -- tag '%s'" tag))) :pos)))
+  (let ((pos (plist-get (car (clipr-cmd (format "select -- tag '%s'" tag))) :pos)))
+    (goto-line (+ 1 pos))))
 
 (defun clipr-save ()
   "Save entries to DB."
