@@ -203,6 +203,7 @@
     (with-temp-file clipr-edit-temp-file
       (insert buf))
     (clipr-cmd (format "insert %s" clipr-edit-temp-file))
+    ;; FIXME: buffer update workaround ;)
     (run-with-timer 0.3 nil (lambda ()
                               (with-current-buffer clipr-buffer-name
                                 (tabulated-list-print nil t))))

@@ -26,6 +26,8 @@ cp clipr-emacs/src/clipr-mode.el <emacs-load-path>/
 
 #### Keys
 
+##### List mode
+
 <kbd>d</kbd> - delete entry
 
 <kbd>g</kbd> - refresh
@@ -45,6 +47,14 @@ cp clipr-emacs/src/clipr-mode.el <emacs-load-path>/
 <kbd>S</kbd> - save state
 
 <kbd>L</kbd> - load state
+
+<kbd>E</kbd> - edit entry
+
+##### Edit mode
+
+<kbd>C-c C-c</kbd> - save entry (will be added as new one ;) )
+
+<kbd>C-c C-k</kbd> - quit edit mode
 
 ## Tasks [0/4]
 
