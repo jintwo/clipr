@@ -108,7 +108,8 @@
   "Kill Clipr."
   (interactive)
   (with-current-buffer clipr-buffer-name
-    (kill-buffer)))
+    (kill-buffer)
+    (delete-window)))
 
 (defun clipr-tag (tag)
   "Tag selected entry."
