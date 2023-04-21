@@ -91,6 +91,7 @@ fn get_entry(idx: usize, entries: &mut clipr_common::Entries) -> Option<&mut cli
         None
     }
 }
+
 fn select_entries(
     entries: &clipr_common::Entries,
     limit: Option<usize>,
@@ -148,7 +149,7 @@ fn get_entries_tags(entries: &clipr_common::Entries) -> HashSet<String> {
     result
 }
 
-async fn clipboard_sync(_state: Arc<clipr_common::State>, sender: Sender<clipr_common::Request>) {
+async fn clipboard_sync(sender: Sender<clipr_common::Request>) {
     let mut last_hash: u64 = 0;
     loop {
         task::sleep(Duration::from_millis(500)).await;
@@ -167,7 +168,7 @@ async fn clipboard_sync(_state: Arc<clipr_common::State>, sender: Sender<clipr_c
     }
 }
 
-async fn repl_loop(_state: Arc<clipr_common::State>, sender: Sender<clipr_common::Request>) {
+async fn repl_loop(sender: Sender<clipr_common::Request>) {
     let mut rl = Editor::<()>::new().unwrap();
     loop {
         let readline = rl.readline(":> ");
@@ -201,7 +202,7 @@ async fn repl_loop(_state: Arc<clipr_common::State>, sender: Sender<clipr_common
     }
 }
 
-async fn empty_fg_loop(_state: Arc<clipr_common::State>, sender: Sender<clipr_common::Request>) {
+async fn empty_fg_loop(sender: Sender<clipr_common::Request>) {
     let mut rl = Editor::<()>::new().unwrap();
     loop {
         let readline = rl.readline("");
@@ -214,18 +215,7 @@ async fn empty_fg_loop(_state: Arc<clipr_common::State>, sender: Sender<clipr_co
     }
 }
 
-async fn cmdline_loop(state: Arc<clipr_common::State>, sender: Sender<clipr_common::Request>) {
-    if !state.config.interactive.unwrap_or(false) {
-        empty_fg_loop(state, sender).await;
-    } else {
-        repl_loop(state, sender).await;
-    };
-}
-
-async fn http_server(
-    state: Arc<clipr_common::State>,
-    sender: Sender<clipr_common::Request>,
-) -> Result<()> {
+async fn http_server(listen_on: String, sender: Sender<clipr_common::Request>) -> Result<()> {
     let mut app = tide::with_state(sender);
     app.at("/command").post(
         |mut req: tide::Request<Sender<clipr_common::Request>>| async move {
@@ -240,19 +230,16 @@ async fn http_server(
             }
         },
     );
-    app.listen(state.config.listen_on()).await?;
+    app.listen(listen_on).await?;
     Ok(())
 }
 
-async fn event_loop(
-    state: Arc<clipr_common::State>,
-    receiver: Receiver<clipr_common::Request>,
-) -> Result<()> {
+async fn event_loop(state: Arc<clipr_common::State>, receiver: Receiver<clipr_common::Request>) {
     let s = state.clone();
     loop {
         if let Ok(msg) = receiver.recv().await {
             match msg {
-                clipr_common::Request::Quit => clipr_common::Response::Stop,
+                clipr_common::Request::Quit => return,
                 clipr_common::Request::Sync(value) => {
                     let mut entries = s.entries.lock().unwrap();
                     handle_insert(value, &mut entries)
@@ -260,7 +247,7 @@ async fn event_loop(
                 clipr_common::Request::Command(cmd, sender) => {
                     let payload = handle_call(s.clone(), cmd).await.unwrap();
                     match payload {
-                        clipr_common::Payload::Stop => return Ok(()),
+                        clipr_common::Payload::Stop => return,
                         _ => {
                             sender
                                 .send(clipr_common::Response::Payload(payload))
@@ -275,27 +262,25 @@ async fn event_loop(
     }
 }
 
-fn handle_insert(s: String, entries: &mut clipr_common::Entries) -> clipr_common::Response {
+fn handle_insert(s: String, entries: &mut clipr_common::Entries) {
     let hash = calculate_hash(&s);
 
     match entries.get_mut(&hash) {
         Some(item) => {
             item.accessed_at = SystemTime::now();
             item.access_counter += 1;
-            clipr_common::Response::Ok
         }
         None => {
             let now = SystemTime::now();
             entries.insert(
                 hash,
                 clipr_common::Item {
-                    value: s.clone(),
+                    value: s,
                     accessed_at: now,
                     access_counter: 1,
                     tags: None,
                 },
             );
-            clipr_common::Response::NewItem(s)
         }
     }
 }
@@ -462,9 +447,13 @@ fn main() -> Result<()> {
     let config = clipr_common::Config::load_from_args(&args)?;
     let state = Arc::new(clipr_common::State::new(config));
     let (sender, receiver) = bounded::<clipr_common::Request>(1);
-    task::spawn(clipboard_sync(state.clone(), sender.clone()));
-    task::spawn(http_server(state.clone(), sender.clone()));
-    task::spawn(cmdline_loop(state.clone(), sender));
-    task::block_on(event_loop(state, receiver))?;
+    task::spawn(clipboard_sync(sender.clone()));
+    task::spawn(http_server(state.config.listen_on(), sender.clone()));
+    if !state.config.interactive.unwrap_or(false) {
+        task::spawn(empty_fg_loop(sender));
+    } else {
+        task::spawn(repl_loop(sender));
+    }
+    task::block_on(event_loop(state, receiver));
     Ok(())
 }

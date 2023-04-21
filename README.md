@@ -58,7 +58,9 @@ cp clipr-emacs/src/clipr-mode.el <emacs-load-path>/
 
 <kbd>C-c C-k</kbd> - quit edit mode
 
-## Tasks [0/4]
+## Tasks
+
+### General [0/5]
 
 * [ ] Pinned entries
 
@@ -68,6 +70,16 @@ cp clipr-emacs/src/clipr-mode.el <emacs-load-path>/
 
 * [ ] LaunchD plist
 
-## Bugs [0/1]
+* [ ] GUI/global menu
 
-* [ ] Leaking
+### Emacs [0/3]
+
+* [ ] Use removal by range / remove selection in clipr-mode
+
+* [ ] Emacs UI display current filter
+
+* [ ] Multi tag selection
+
+### Bugs [0/1]
+
+* [ ] Leaking (try to specify lifetimes + remove all .clone)
