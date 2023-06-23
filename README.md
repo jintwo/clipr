@@ -72,6 +72,18 @@ cp clipr-emacs/src/clipr-mode.el <emacs-load-path>/
 
 * [ ] GUI/global menu
 
+* [ ] Reduce dependencies
+
+### Refactoring [0/3]
+
+* [ ] Use lifetimes!
+
+* [ ] Switch to LINKED-LIST + SET (or w/o). Looks like it will be a lot easier to reorder entries.
+
+* [ ] Split/simplify command handling
+
+* [ ] Maybe actor-like stuff isn't necessary there?
+
 ### Emacs [0/3]
 
 * [ ] Use removal by range / remove selection in clipr-mode

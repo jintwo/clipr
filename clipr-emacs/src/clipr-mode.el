@@ -183,7 +183,7 @@
     (define-key map (kbd "q") 'clipr-kill)
     (define-key map (kbd "+") 'clipr-tag)
     (define-key map (kbd "-") 'clipr-untag)
-    (define-key map (kbd "t") 'clipr-filter-by-tag)
+    (define-key map (kbd "f") 'clipr-filter-by-tag)
     (define-key map (kbd "c") 'clipr-filter-clear)
     (define-key map (kbd "j") 'clipr-jump-to-tag)
     (define-key map (kbd "S") 'clipr-save)
