@@ -4,12 +4,13 @@ use async_std::fs::File;
 use async_std::prelude::*;
 use async_std::task;
 use clap::Parser;
+use clipr_common::Item;
 use cocoa::appkit::{NSPasteboard, NSPasteboardTypeString};
 use cocoa::base::{id, nil};
 use cocoa::foundation::NSString;
 use rustyline::Editor;
 use std::collections::hash_map::DefaultHasher;
-use std::collections::HashSet;
+use std::collections::{HashSet, LinkedList};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -36,60 +37,39 @@ unsafe fn set_current_entry(s: String) {
     pb.setString_forType(val, NSPasteboardTypeString);
 }
 
-fn calculate_hash<T: Hash>(v: T) -> u64 {
+fn calculate_hash<T: Hash>(v: &T) -> u64 {
     let mut h = DefaultHasher::new();
     v.hash(&mut h);
     h.finish()
 }
 
-fn _entries_to_indexed_vec(
-    entries: &clipr_common::Entries,
-    limit: Option<usize>,
-    offset: Option<usize>,
-) -> Vec<(usize, &clipr_common::Item)> {
-    let mut items: Vec<&clipr_common::Item> = entries.values().collect();
-
-    items.sort_by_key(|i| i.accessed_at);
-    items.reverse();
-
-    let it = items.into_iter().enumerate().skip(offset.unwrap_or(0));
-
-    match limit {
-        Some(limit) if limit > 0 => it.take(limit).collect(),
-        _ => it.collect(),
-    }
-}
-
-fn get_entry_value(idx: usize, entries: &clipr_common::Entries) -> Option<String> {
-    let items = _entries_to_indexed_vec(entries, None, None);
-
-    items
-        .iter()
-        .find(|(i, _item)| idx == *i)
-        .map(|(_, item)| item.value.clone())
-}
-
 fn del_entries(from_idx: usize, to_idx: Option<usize>, entries: &mut clipr_common::Entries) {
-    let items = _entries_to_indexed_vec(entries, None, None);
+    let removed: LinkedList<Item> = match to_idx {
+        None => entries.values.split_off(from_idx),
+        Some(to_idx) => {
+            let mut upper = entries.values.split_off(from_idx);
+            let removed = upper.split_off(to_idx - from_idx);
+            entries.values.append(&mut upper);
+            removed
+        }
+    };
 
-    let hashes: Vec<u64> = items
-        .iter()
-        .filter(|(i, _item)| *i >= from_idx && *i <= to_idx.unwrap_or(from_idx))
-        .map(|(_, item)| calculate_hash(&item.value))
-        .collect();
-
-    hashes.iter().for_each(|hash| {
-        entries.remove(hash);
+    removed.iter().for_each(|item| {
+        entries.hashes.remove(&calculate_hash(&item.value));
     });
 }
 
 fn get_entry(idx: usize, entries: &mut clipr_common::Entries) -> Option<&mut clipr_common::Item> {
-    if let Some(value) = get_entry_value(idx, entries) {
-        let hash = calculate_hash(value);
-        entries.get_mut(&hash)
-    } else {
-        None
-    }
+    entries
+        .values
+        .iter_mut()
+        .enumerate()
+        .find(|(i, _)| idx == *i)
+        .map(|(_, item)| item)
+}
+
+fn get_entry_value(idx: usize, entries: &mut clipr_common::Entries) -> Option<String> {
+    get_entry(idx, entries).map(|item| item.value.clone())
 }
 
 fn select_entries(
@@ -97,11 +77,14 @@ fn select_entries(
     limit: Option<usize>,
     offset: Option<usize>,
 ) -> Vec<(usize, clipr_common::Item)> {
-    let items = _entries_to_indexed_vec(entries, limit, offset);
     let offset_val = offset.unwrap_or(0);
+    let limit_val = limit.unwrap_or(entries.values.len());
 
-    items
-        .into_iter()
+    entries
+        .values
+        .iter()
+        .enumerate()
+        .filter(|(idx, item)| *idx >= offset_val && *idx <= (offset_val + limit_val))
         .map(|(idx, item)| ((idx + offset_val), item.clone()))
         .collect()
 }
@@ -110,11 +93,13 @@ fn select_entries_by_value(
     entries: &clipr_common::Entries,
     value: String,
 ) -> Vec<(usize, clipr_common::Item)> {
-    let items = _entries_to_indexed_vec(entries, None, None);
+    let val = value.as_str();
 
-    items
-        .into_iter()
-        .filter(|(_, item)| item.value.contains(value.as_str()))
+    entries
+        .values
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| item.value.contains(val))
         .map(|(idx, item)| (idx, item.clone()))
         .collect()
 }
@@ -123,10 +108,10 @@ fn select_entries_by_tag(
     entries: &clipr_common::Entries,
     tag: String,
 ) -> Vec<(usize, clipr_common::Item)> {
-    let items = _entries_to_indexed_vec(entries, None, None);
-
-    items
-        .into_iter()
+    entries
+        .values
+        .iter()
+        .enumerate()
         .filter(|(_, item)| {
             if let Some(tags) = &item.tags {
                 tags.get(&tag).is_some()
@@ -139,9 +124,8 @@ fn select_entries_by_tag(
 }
 
 fn get_entries_tags(entries: &clipr_common::Entries) -> HashSet<String> {
-    let items: Vec<&clipr_common::Item> = entries.values().collect();
     let mut result: HashSet<String> = HashSet::new();
-    for item in items {
+    for item in entries.values.iter() {
         if let Some(tags) = item.tags.as_ref() {
             result = result.union(tags).cloned().collect();
         }
@@ -265,25 +249,32 @@ async fn event_loop(state: Arc<clipr_common::State>, receiver: Receiver<clipr_co
 fn handle_insert(s: String, entries: &mut clipr_common::Entries) {
     let hash = calculate_hash(&s);
 
-    match entries.get_mut(&hash) {
-        Some(item) => {
-            item.accessed_at = SystemTime::now();
-            item.access_counter += 1;
+    if entries.hashes.contains(&hash) {
+        if let Some(idx) = entries
+            .values
+            .iter()
+            .enumerate()
+            .find(|(_, item)| calculate_hash(&item.value) == hash)
+            .map(|(idx, _)| idx)
+        {
+            let mut tail = entries.values.split_off(idx);
+            if let Some(mut elt) = tail.pop_front() {
+                elt.access_counter += 1;
+
+                entries.values.push_front(elt);
+                entries.values.append(&mut tail);
+            }
         }
-        None => {
-            let now = SystemTime::now();
-            entries.insert(
-                hash,
-                clipr_common::Item {
-                    value: s,
-                    accessed_at: now,
-                    access_counter: 1,
-                    tags: None,
-                },
-            );
-        }
+    } else {
+        entries.hashes.insert(hash);
+        entries.values.push_front(clipr_common::Item {
+            value: s,
+            access_counter: 1,
+            tags: None,
+        })
     }
 }
+
 async fn save_db(state: Arc<clipr_common::State>) -> Result<()> {
     let db_path = state.config.db.as_ref().unwrap();
     let mut file = File::create(db_path).await?;
@@ -325,7 +316,7 @@ async fn handle_call(
         clipr_common::Command::Count => {
             let entries = state.entries.lock().unwrap();
             clipr_common::Payload::Value {
-                value: Some(entries.len().to_string()),
+                value: Some(entries.values.len().to_string()),
             }
         }
         clipr_common::Command::Save => {
@@ -337,8 +328,8 @@ async fn handle_call(
             clipr_common::Payload::Ok
         }
         clipr_common::Command::Get { index } => {
-            let entries = state.entries.lock().unwrap();
-            match get_entry_value(index, &entries) {
+            let mut entries = state.entries.lock().unwrap();
+            match get_entry_value(index, &mut entries) {
                 Some(val) => clipr_common::Payload::Value { value: Some(val) },
                 None => clipr_common::Payload::Message {
                     value: format!("item at {index:?} not found"),
@@ -357,8 +348,8 @@ async fn handle_call(
             clipr_common::Payload::Ok
         }
         clipr_common::Command::Set { index } => {
-            let entries = state.entries.lock().unwrap();
-            if let Some(value) = get_entry_value(index, &entries) {
+            let mut entries = state.entries.lock().unwrap();
+            if let Some(value) = get_entry_value(index, &mut entries) {
                 unsafe { set_current_entry(value) };
                 clipr_common::Payload::Ok
             } else {

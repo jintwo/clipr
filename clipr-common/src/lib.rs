@@ -3,7 +3,7 @@ use async_std::channel::{bounded, Sender};
 use chrono::prelude::*;
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashSet, LinkedList};
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
@@ -113,15 +113,17 @@ pub fn format_item(item: &Item, short: bool, preview_length: Option<usize>) -> S
         None => "".to_string(),
     };
 
-    let dt: DateTime<Local> = item.accessed_at.into();
+    // let dt: DateTime<Local> = item.accessed_at.into();
     let max_len = preview_length.unwrap_or(MAX_LEN);
 
-    format!(
-        "{:<max_len$} #[{:<16}] @[{:<10}] ",
-        val,
-        tags,
-        dt.format("%d-%m-%Y")
-    )
+    // format!(
+    //     "{:<max_len$} #[{:<16}] @[{:<10}] ",
+    //     val,
+    //     tags,
+    //     dt.format("%d-%m-%Y")
+    // )
+
+    format!("{:<max_len$} #[{:<16}]", val, tags,)
 }
 
 fn _has_newlines(s: &str) -> Option<usize> {
@@ -195,12 +197,29 @@ impl From<&Payload> for String {
 #[serde(rename_all = "kebab-case")]
 pub struct Item {
     pub value: String,
-    pub accessed_at: SystemTime,
     pub access_counter: u32,
     pub tags: Option<HashSet<String>>,
 }
 
-pub type Entries = std::collections::BTreeMap<u64, Item>;
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Entries {
+    pub values: LinkedList<Item>,
+    pub hashes: HashSet<u64>,
+    pub tags: HashSet<String>,
+}
+
+impl Entries {
+    pub fn new() -> Self {
+        Entries {
+            values: LinkedList::new(),
+            hashes: HashSet::new(),
+            tags: HashSet::new(),
+        }
+    }
+
+    pub fn insert(&mut self, s: String) {}
+
+}
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
