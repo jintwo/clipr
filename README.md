@@ -74,11 +74,11 @@ cp clipr-emacs/src/clipr-mode.el <emacs-load-path>/
 
 * [ ] Reduce dependencies
 
-### Refactoring [0/3]
+### Refactoring [0/4]
 
 * [ ] Use lifetimes!
 
-* [ ] Switch to LINKED-LIST + SET (or w/o). Looks like it will be a lot easier to reorder entries.
+* [X] Switch to LINKED-LIST + SET (or w/o). Looks like it will be a lot easier to reorder entries.
 
 * [ ] Split/simplify command handling
 

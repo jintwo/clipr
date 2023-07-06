@@ -101,9 +101,6 @@ fn cmd(env: &Env, value: String) -> emacs::Result<emacs::Value<'_>> {
         Ok(payload) => payload_to_lisp(&payload, env),
         Err(err) => bail!(err),
     }
-
-    // TODO:
-    // 4. use emacs table interface (see chuck plugin) [id, short-val, tags, date]
 }
 
 async fn call(config: Arc<Config>, cmd: Command) -> anyhow::Result<Payload, surf::Error> {
