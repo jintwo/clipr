@@ -150,7 +150,7 @@ async fn event_loop(state: Arc<clipr_common::State>, receiver: Receiver<clipr_co
 async fn save_db(state: Arc<clipr_common::State>) -> Result<()> {
     let db_path = state.config.db.as_ref().unwrap();
     let mut file = File::create(db_path).await?;
-    let data = serde_lexpr::to_string_custom(&state.entries, serde_lexpr::print::Options::elisp())?;
+    let data = serde_json::to_string_pretty(&state.entries)?;
     file.write_all(data.as_bytes()).await?;
     Ok(())
 }
@@ -160,8 +160,7 @@ async fn load_db(state: Arc<clipr_common::State>) -> Result<()> {
     let mut file = File::open(db_path).await?;
     let mut buffer = String::new();
     file.read_to_string(&mut buffer).await?;
-    let data: clipr_common::Entries =
-        serde_lexpr::from_str_custom(buffer.as_str(), serde_lexpr::parse::Options::elisp())?;
+    let data: clipr_common::Entries = serde_json::from_str(buffer.as_str())?;
     let mut entries = state.entries.lock().unwrap();
     *entries = data;
     drop(entries);
