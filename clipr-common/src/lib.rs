@@ -211,7 +211,7 @@ pub struct Item {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Entries {
     pub values: LinkedList<Item>,
-    pub hashes: HashSet<u64>,
+    pub hashes: LinkedList<u64>,
 }
 
 impl Default for Entries {
@@ -220,58 +220,69 @@ impl Default for Entries {
     }
 }
 
+fn _drop_list_values<T>(from_idx: usize, to_idx: Option<usize>, list: &mut LinkedList<T>) {
+    match to_idx {
+        None => {
+            list.split_off(from_idx);
+        }
+        Some(to_idx) => {
+            let mut upper = list.split_off(from_idx);
+            let _ = upper.split_off(to_idx - from_idx);
+            list.append(&mut upper);
+        }
+    }
+}
+
+fn _find_list_element<T>(value: &T, list: &LinkedList<T>) -> Option<usize>
+where
+    T: PartialEq<T>,
+{
+    list.iter()
+        .enumerate()
+        .find(|&(_, h)| h == value)
+        .map(|(idx, _)| idx)
+}
+
 impl Entries {
     pub fn new() -> Self {
         Entries {
             values: LinkedList::new(),
-            hashes: HashSet::new(),
+            hashes: LinkedList::new(),
         }
     }
 
+    // INFO: values + hashes should be consistent. in the name of DOD ;)
     pub fn insert(&mut self, value: String) {
         let hash = calculate_hash(&value);
 
-        if self.hashes.contains(&hash) {
-            if let Some(idx) = self
-                .values
-                .iter()
-                .enumerate()
-                .find(|(_, item)| calculate_hash(&item.value) == hash)
-                .map(|(idx, _)| idx)
-            {
-                let mut tail = self.values.split_off(idx);
-                if let Some(mut elt) = tail.pop_front() {
-                    elt.access_counter += 1;
-                    elt.accessed_at = SystemTime::now();
-                    self.values.push_front(elt);
-                    self.values.append(&mut tail);
-                }
+        if let Some(idx) = _find_list_element(&hash, &self.hashes) {
+            let mut values_tail = self.values.split_off(idx);
+            if let Some(mut elt) = values_tail.pop_front() {
+                elt.access_counter += 1;
+                elt.accessed_at = SystemTime::now();
+                self.values.push_front(elt);
+                self.values.append(&mut values_tail);
+            }
+
+            let mut hashes_tail = self.hashes.split_off(idx);
+            if let Some(elt) = hashes_tail.pop_front() {
+                self.hashes.push_front(elt);
+                self.hashes.append(&mut hashes_tail);
             }
         } else {
-            self.hashes.insert(hash);
+            self.hashes.push_front(hash);
             self.values.push_front(Item {
                 value,
                 access_counter: 1,
                 accessed_at: SystemTime::now(),
                 tags: None,
-            })
+            });
         }
     }
 
     pub fn delete(&mut self, from_idx: usize, to_idx: Option<usize>) {
-        let removed: LinkedList<Item> = match to_idx {
-            None => self.values.split_off(from_idx),
-            Some(to_idx) => {
-                let mut upper = self.values.split_off(from_idx);
-                let removed = upper.split_off(to_idx - from_idx);
-                self.values.append(&mut upper);
-                removed
-            }
-        };
-
-        removed.iter().for_each(|item| {
-            self.hashes.remove(&calculate_hash(&item.value));
-        });
+        _drop_list_values(from_idx, to_idx, &mut self.values);
+        _drop_list_values(from_idx, to_idx, &mut self.hashes);
     }
 
     pub fn get(&mut self, idx: usize) -> Option<&mut Item> {
@@ -377,7 +388,7 @@ impl Default for Config {
             host: Some(String::from("127.0.0.1")),
             port: Some(8932),
             interactive: Some(true),
-            db: Some(String::from("./db.lisp")),
+            db: Some(String::from("./db.json")),
         }
     }
 }
