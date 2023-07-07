@@ -221,16 +221,10 @@ impl Default for Entries {
 }
 
 fn _drop_list_values<T>(from_idx: usize, to_idx: Option<usize>, list: &mut LinkedList<T>) {
-    match to_idx {
-        None => {
-            list.split_off(from_idx);
-        }
-        Some(to_idx) => {
-            let mut upper = list.split_off(from_idx);
-            let _ = upper.split_off(to_idx - from_idx);
-            list.append(&mut upper);
-        }
-    }
+    let to_idx = to_idx.unwrap_or(from_idx + 1);
+    let mut upper = list.split_off(from_idx);
+    let mut rest = upper.split_off(to_idx - from_idx);
+    list.append(&mut rest);
 }
 
 fn _find_list_element<T>(value: &T, list: &LinkedList<T>) -> Option<usize>
