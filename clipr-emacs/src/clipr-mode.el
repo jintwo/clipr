@@ -35,7 +35,7 @@
    ("Content" 35 nil)]
   "Clipr list format.")
 
-(defconst clipr--default-query-cmd (string-join (list "list" "0" "0" (number-to-string clipr-item-preview-length)) " "))
+(defconst clipr--default-query-cmd (string-join (list "list" "0" "128" (number-to-string clipr-item-preview-length)) " "))
 
 (defconst clipr--default-action 'clipr-select-and-quit)
 

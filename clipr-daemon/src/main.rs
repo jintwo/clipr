@@ -173,12 +173,12 @@ async fn handle_call(
 ) -> Result<clipr_common::Payload> {
     Ok(match cmd {
         clipr_common::Command::List {
-            limit,
-            offset,
+            from_index,
+            to_index,
             preview_length,
         } => {
             let entries = state.entries.lock().unwrap();
-            let items = entries.select(limit, offset);
+            let items = entries.select_by_range(from_index, to_index);
             clipr_common::Payload::List {
                 value: items,
                 preview_length,

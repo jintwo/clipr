@@ -1,5 +1,5 @@
 USAGE:
- list ?limit ?offset
+ list ?from-index ?to-index
  count
  save
  load

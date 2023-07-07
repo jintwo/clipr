@@ -66,8 +66,8 @@ pub enum Command {
         to_index: Option<usize>,
     },
     List {
-        limit: Option<usize>,
-        offset: Option<usize>,
+        from_index: Option<usize>,
+        to_index: Option<usize>,
         preview_length: Option<usize>,
     },
     Get {
@@ -274,9 +274,9 @@ impl Entries {
         }
     }
 
-    pub fn delete(&mut self, from_idx: usize, to_idx: Option<usize>) {
-        _drop_list_values(from_idx, to_idx, &mut self.values);
-        _drop_list_values(from_idx, to_idx, &mut self.hashes);
+    pub fn delete(&mut self, from_index: usize, to_index: Option<usize>) {
+        _drop_list_values(from_index, to_index, &mut self.values);
+        _drop_list_values(from_index, to_index, &mut self.hashes);
     }
 
     pub fn get(&mut self, idx: usize) -> Option<&mut Item> {
@@ -291,15 +291,15 @@ impl Entries {
         self.get(idx).map(|item| item.value.clone())
     }
 
-    pub fn select(&self, limit: Option<usize>, offset: Option<usize>) -> Vec<(usize, Item)> {
-        let offset_val = offset.unwrap_or(0);
-        let limit_val = limit.unwrap_or(self.values.len());
+    pub fn select_by_range(&self, from_index: Option<usize>, to_index: Option<usize>) -> Vec<(usize, Item)> {
+        let from_index = from_index.unwrap_or(0);
+        let to_index = to_index.unwrap_or(self.values.len());
 
         self.values
             .iter()
             .enumerate()
-            .filter(|(idx, _item)| *idx >= offset_val && *idx <= (offset_val + limit_val))
-            .map(|(idx, item)| ((idx + offset_val), item.clone()))
+            .filter(|(idx, _item)| *idx >= from_index && *idx < to_index)
+            .map(|(idx, item)| (idx, item.clone()))
             .collect()
     }
 
