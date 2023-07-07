@@ -208,6 +208,22 @@ pub struct Item {
     pub tags: Option<HashSet<String>>,
 }
 
+impl Item {
+    pub fn new(value: String) -> Self {
+        Self {
+            value,
+            access_counter: 1,
+            accessed_at: SystemTime::now(),
+            tags: None,
+        }
+    }
+
+    pub fn touch(&mut self) {
+        self.accessed_at = SystemTime::now();
+        self.access_counter += 1;
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Entries {
     pub values: LinkedList<Item>,
@@ -252,8 +268,7 @@ impl Entries {
         if let Some(idx) = _find_list_element(&hash, &self.hashes) {
             let mut values_tail = self.values.split_off(idx);
             if let Some(mut elt) = values_tail.pop_front() {
-                elt.access_counter += 1;
-                elt.accessed_at = SystemTime::now();
+                elt.touch();
                 self.values.push_front(elt);
                 self.values.append(&mut values_tail);
             }
@@ -265,12 +280,7 @@ impl Entries {
             }
         } else {
             self.hashes.push_front(hash);
-            self.values.push_front(Item {
-                value,
-                access_counter: 1,
-                accessed_at: SystemTime::now(),
-                tags: None,
-            });
+            self.values.push_front(Item::new(value));
         }
     }
 
@@ -291,7 +301,11 @@ impl Entries {
         self.get(idx).map(|item| item.value.clone())
     }
 
-    pub fn select_by_range(&self, from_index: Option<usize>, to_index: Option<usize>) -> Vec<(usize, Item)> {
+    pub fn select_by_range(
+        &self,
+        from_index: Option<usize>,
+        to_index: Option<usize>,
+    ) -> Vec<(usize, Item)> {
         let from_index = from_index.unwrap_or(0);
         let to_index = to_index.unwrap_or(self.values.len());
 
@@ -404,5 +418,26 @@ impl Config {
         } else {
             Self::default()
         })
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_entries_insert() {
+        let mut entries = Entries::default();
+        entries.insert(String::from("hello"));
+        assert_eq!(entries.values.len(), 1);
+        assert_eq!(entries.hashes.len(), 1);
+    }
+
+    #[test]
+    fn test_entries_get() {
+        let value = String::from("hello");
+        let mut entries = Entries::default();
+        entries.insert(value.clone());
+        assert_eq!(entries.get(0).unwrap().value, value);
     }
 }
