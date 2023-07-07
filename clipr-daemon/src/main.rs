@@ -5,8 +5,8 @@ use async_std::prelude::*;
 use async_std::task;
 use clap::Parser;
 use cocoa::appkit::{NSPasteboard, NSPasteboardTypeString};
-use cocoa::base::{id, nil};
-use cocoa::foundation::NSString;
+use cocoa::base::nil;
+use cocoa::foundation::{NSInteger, NSString};
 use rustyline::Editor;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -16,15 +16,22 @@ use tide::Body;
 
 static USAGE: &str = include_str!("usage.txt");
 
-unsafe fn nsstring_to_slice(s: &id) -> &str {
-    let bytes = s.UTF8String() as *const u8;
-    std::str::from_utf8(std::slice::from_raw_parts(bytes, s.len())).unwrap()
+unsafe fn get_change_count() -> NSInteger {
+    let pb = NSPasteboard::generalPasteboard(nil);
+    pb.changeCount()
 }
 
-unsafe fn get_current_entry() -> String {
+unsafe fn get_current_entry() -> Option<String> {
     let pb = NSPasteboard::generalPasteboard(nil);
     let val = pb.stringForType(NSPasteboardTypeString);
-    nsstring_to_slice(&val).to_owned()
+    if val == nil {
+        return None;
+    }
+
+    let bytes = val.UTF8String() as *const u8;
+    Some(String::from(
+        std::str::from_utf8(std::slice::from_raw_parts(bytes, val.len())).unwrap(),
+    ))
 }
 
 unsafe fn set_current_entry(s: String) {
@@ -36,20 +43,27 @@ unsafe fn set_current_entry(s: String) {
 
 async fn clipboard_sync(sender: Sender<clipr_common::Request>) {
     let mut last_hash: u64 = 0;
+    let mut last_cc: i64 = 0;
     loop {
         task::sleep(Duration::from_millis(500)).await;
-        let val = unsafe { get_current_entry() };
-        if val.is_empty() {
+        let cc = unsafe { get_change_count() };
+        if last_cc == cc {
             continue;
+        } else {
+            last_cc = cc;
         }
+        match unsafe { get_current_entry() } {
+            None => continue,
+            Some(val) => {
+                let hash = clipr_common::calculate_hash(&val);
+                if last_hash == hash {
+                    continue;
+                }
 
-        let hash = clipr_common::calculate_hash(&val);
-        if last_hash == hash {
-            continue;
+                last_hash = hash;
+                sender.send(clipr_common::Request::Sync(val)).await.unwrap();
+            }
         }
-
-        last_hash = hash;
-        sender.send(clipr_common::Request::Sync(val)).await.unwrap();
     }
 }
 
