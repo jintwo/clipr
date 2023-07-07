@@ -99,9 +99,16 @@
   (clipr-kill))
 
 (defun clipr-delete ()
-  "Delete selected entry."
+  "Delete selected entries."
   (interactive)
-  (clipr-cmd (format "del %d" (tabulated-list-get-id)))
+  (if (use-region-p)
+      (let ((start (region-beginning))
+            (end (region-end)))
+        (clipr-cmd (format "del %d %d"
+                           (tabulated-list-get-id start)
+                           (tabulated-list-get-id end)))
+        (goto-line (line-number-at-pos start)))
+    (clipr-cmd (format "del %d" (tabulated-list-get-id))))
   (clipr-refresh))
 
 (defun clipr-kill ()
