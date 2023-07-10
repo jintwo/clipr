@@ -201,7 +201,7 @@ async fn handle_call(
         clipr_common::Command::Count => {
             let entries = state.entries.lock().unwrap();
             clipr_common::Payload::Value {
-                value: Some(entries.values.len().to_string()),
+                value: Some(entries.len().to_string()),
             }
         }
         clipr_common::Command::Save => {

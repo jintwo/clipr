@@ -179,11 +179,20 @@ impl From<&Payload> for String {
             Payload::List {
                 value,
                 preview_length,
-            } => value
-                .iter()
-                .map(|(idx, val)| format!("{}: {}", idx, format_item(val, true, *preview_length)))
-                .collect::<Vec<String>>()
-                .join("\n"),
+            } => {
+                let places = value.len().to_string().len();
+                value
+                    .iter()
+                    .map(|(idx, val)| {
+                        format!(
+                            "{:>places$}: {}",
+                            idx,
+                            format_item(val, true, *preview_length)
+                        )
+                    })
+                    .collect::<Vec<String>>()
+                    .join("\n")
+            }
             Payload::Value { value } => match value {
                 Some(v) => v.to_owned(),
                 _ => "".to_string(),
@@ -351,6 +360,18 @@ impl Entries {
             }
         }
         result
+    }
+
+    pub fn len(&self) -> usize {
+        let values_len = self.values.len();
+        let hashes_len = self.hashes.len();
+        if values_len != hashes_len {
+            eprintln!(
+                "Inconsistent state ({} values against {} hashes). Need to rebuild index.",
+                hashes_len, values_len
+            )
+        }
+        values_len
     }
 }
 
