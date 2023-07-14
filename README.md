@@ -8,20 +8,39 @@ Simple MacOS clipboard (pasteboard) manager with cli and emacs interfaces. Under
 ### Server
 
 ```bash
-cargo run --bin clipr-daemon -- -c config.toml
+cargo run --bin clipr-daemon -- -c PATH/TO/config.toml
 ```
 
 ### CLI
 
 ```bash
-cargo run --bin clipr-cli -- -c config.toml <command>
+cargo run --bin clipr-cli -- -c PATH/TO/config.toml <command>
+```
+
+#### Alias
+
+```bash
+CLIPR_CLI="PATH/TO/target/debug/clipr-cli"
+CLIPR_CONFIG="PATH/TO/config.toml"
+
+alias c="$CLIPR_CLI -c $CLIPR_CONFIG"
 ```
 
 ### Emacs module
 
 ```bash
-cargo build --lib clipr-emacs && target/debug/libclipr.dylib <emacs-load-path>/clipr.so
-cp clipr-emacs/src/clipr-mode.el <emacs-load-path>/
+cargo build --lib clipr-emacs
+cp target/debug/libclipr.dylib <emacs-load-path>/clipr-mode/clipr.so
+cp clipr-emacs/src/clipr-mode.el <emacs-load-path>/clipr-mode/
+```
+
+```elisp
+;; Usage example
+(use-package clipr-mode
+  :load-path "PATH/TO/clipr-mode"
+  :bind (:map global-map (("C-c c" . clipr-show)))
+  :custom
+  (clipr-config-path "PATH/TO/config.toml"))
 ```
 
 #### Keys
