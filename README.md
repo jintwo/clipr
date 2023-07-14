@@ -103,9 +103,9 @@ cp clipr-emacs/src/clipr-mode.el <emacs-load-path>/clipr-mode/
 
 * [ ] Reduce dependencies
 
-### Emacs [0/3]
+### Emacs [1/3]
 
-* [ ] Use removal by range / remove selection in clipr-mode
+* [X] Use removal by range / remove selection in clipr-mode
 
 * [ ] Emacs UI display current filter
 
