@@ -28,19 +28,19 @@ cp clipr-emacs/src/clipr-mode.el <emacs-load-path>/
 
 ##### List mode
 
-<kbd>d</kbd> - delete entry
-
 <kbd>g</kbd> - refresh
 
-<kbd>RET</kbd> - select
+<kbd>RET</kbd> - select and close
 
-<kbd>q</kbd> - quit
+<kbd>d</kbd> - delete entry
+
+<kbd>q</kbd> - close
 
 <kbd>+</kbd> - add tag
 
 <kbd>-</kbd> - delete tag
 
-<kbd>t</kbd> - set filter by tag
+<kbd>f</kbd> - set filter by tag
 
 <kbd>c</kbd> - clear filter
 
@@ -72,17 +72,17 @@ cp clipr-emacs/src/clipr-mode.el <emacs-load-path>/
 
 * [ ] GUI/global menu
 
-* [ ] Reduce dependencies
-
-### Refactoring [0/4]
-
-* [ ] Use lifetimes!
+### Refactoring [1/5]
 
 * [X] Switch to LINKED-LIST + SET (or w/o). Looks like it will be a lot easier to reorder entries.
 
 * [ ] Split/simplify command handling
 
 * [ ] Maybe actor-like stuff isn't necessary there?
+
+* [ ] More rusty (try to specify lifetimes + remove all .clone)
+
+* [ ] Reduce dependencies
 
 ### Emacs [0/3]
 
@@ -92,6 +92,6 @@ cp clipr-emacs/src/clipr-mode.el <emacs-load-path>/
 
 * [ ] Multi tag selection
 
-### Bugs [0/1]
+### Bugs [1/1]
 
-* [ ] Leaking (try to specify lifetimes + remove all .clone)
+* [X] Leaking (if there is no changes in PB we still allocating NSString)
