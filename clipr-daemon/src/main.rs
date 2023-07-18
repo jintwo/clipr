@@ -9,6 +9,8 @@ use cocoa::base::nil;
 use cocoa::foundation::{NSInteger, NSString};
 use rustyline::Editor;
 use std::collections::HashSet;
+use std::fs::File as SyncFile;
+use std::io::prelude::*;
 use std::sync::Arc;
 use std::time::Duration;
 use tide::prelude::*;
@@ -166,6 +168,14 @@ async fn save_db(state: Arc<clipr_common::State>) -> Result<()> {
     let mut file = File::create(db_path).await?;
     let data = serde_json::to_string_pretty(&state.entries)?;
     file.write_all(data.as_bytes()).await?;
+    Ok(())
+}
+
+fn save_db_sync(state: Arc<clipr_common::State>) -> Result<()> {
+    let db_path = state.config.db.as_ref().unwrap();
+    let mut file = SyncFile::create(db_path)?;
+    let data = serde_json::to_string_pretty(&state.entries)?;
+    file.write_all(data.as_bytes())?;
     Ok(())
 }
 
@@ -330,6 +340,8 @@ fn main() -> Result<()> {
     } else {
         task::spawn(repl_loop(sender));
     }
-    task::block_on(event_loop(state, receiver));
+    task::block_on(event_loop(state.clone(), receiver));
+    // sync state at exit
+    save_db_sync(state)?;
     Ok(())
 }

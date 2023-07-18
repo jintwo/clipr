@@ -79,7 +79,7 @@ cp clipr-emacs/src/clipr-mode.el <emacs-load-path>/clipr-mode/
 
 ## Tasks
 
-### General [0/5]
+### General [1/6]
 
 * [ ] Pinned entries
 
@@ -88,6 +88,8 @@ cp clipr-emacs/src/clipr-mode.el <emacs-load-path>/clipr-mode/
 * [ ] Deadline timeout (for sensitive data)
 
 * [ ] LaunchD plist
+
+* [X] Save state on quit
 
 * [ ] GUI/global menu
 
