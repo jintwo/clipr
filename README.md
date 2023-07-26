@@ -85,6 +85,7 @@ cp clipr-emacs/src/clipr-mode.el <emacs-load-path>/clipr-mode/
       Currently there is no big difference from Tags.
       Put it in front of list while listing ;)
       Allow `set by pin` -> because pins should be unique.
+      Convert pins to upper case.
 
 * [ ] Masked entries
 
