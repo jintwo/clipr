@@ -79,9 +79,12 @@ cp clipr-emacs/src/clipr-mode.el <emacs-load-path>/clipr-mode/
 
 ## Tasks
 
-### General [1/6]
+### General [1/7]
 
-* [ ] Pinned entries
+* [/] Pinned entries (use letters!).
+      Currently there is no big difference from Tags.
+      Put it in front of list while listing ;)
+      Allow `set by pin` -> because pins should be unique.
 
 * [ ] Masked entries
 
@@ -91,7 +94,9 @@ cp clipr-emacs/src/clipr-mode.el <emacs-load-path>/clipr-mode/
 
 * [X] Save state on quit
 
-* [ ] GUI/global menu
+* [?] Limited size. Only after proper implementation of pinned entries.
+
+* [ ] GUI/global menu (tag-based folders?)
 
 ### Refactoring [1/5]
 
@@ -113,6 +118,8 @@ cp clipr-emacs/src/clipr-mode.el <emacs-load-path>/clipr-mode/
 
 * [ ] Multi tag selection
 
-### Bugs [1/1]
+### Bugs [1/2]
 
-* [X] Leaking (if there is no changes in PB we still allocating NSString)
+* [X] If there is no changes in PB we still allocating NSString
+
+* [ ] After cleanup memory usage doesn't goes down

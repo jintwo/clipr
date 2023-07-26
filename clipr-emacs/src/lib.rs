@@ -48,7 +48,7 @@ fn payload_to_lisp<'a>(payload: &Payload, env: &'a Env) -> emacs::Result<emacs::
 
             let mut result: Vec<emacs::Value> = vec![];
 
-            for (idx, item) in value.iter() {
+            for (index, item) in value.iter() {
                 let item_tags = if let Some(tags) = &item.tags {
                     let mut ts = tags.iter().cloned().collect::<Vec<String>>();
                     ts.sort();
@@ -63,7 +63,7 @@ fn payload_to_lisp<'a>(payload: &Payload, env: &'a Env) -> emacs::Result<emacs::
 
                 let v = env.list((
                     pos,
-                    *idx,
+                    *index,
                     content,
                     shorten(&item.value, *preview_length),
                     tags,

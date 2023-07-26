@@ -87,6 +87,13 @@ pub enum Command {
         index: usize,
         tag: String,
     },
+    Pin {
+        index: usize,
+        pin: char,
+    },
+    Unpin {
+        index: usize,
+    },
     Tags,
     Count,
     Save,
@@ -119,7 +126,8 @@ pub fn format_item(item: &Item, short: bool, preview_length: Option<usize>) -> S
     let max_len = preview_length.unwrap_or(MAX_LEN);
 
     format!(
-        "{:<max_len$} #[{:<16}] @[{:<10}] ",
+        "[{:1}] {:<max_len$} #[{:<16}] @[{:<10}] ",
+        item.pin.unwrap_or(' '),
         val,
         tags,
         dt.format("%d-%m-%Y")
@@ -183,10 +191,10 @@ impl From<&Payload> for String {
                 let places = value.len().to_string().len();
                 value
                     .iter()
-                    .map(|(idx, val)| {
+                    .map(|(index, val)| {
                         format!(
                             "{:>places$}: {}",
-                            idx,
+                            index,
                             format_item(val, true, *preview_length)
                         )
                     })
@@ -215,6 +223,7 @@ pub struct Item {
     pub access_counter: u32,
     pub accessed_at: SystemTime,
     pub tags: Option<HashSet<String>>,
+    pub pin: Option<char>,
 }
 
 impl Item {
@@ -224,12 +233,19 @@ impl Item {
             access_counter: 1,
             accessed_at: SystemTime::now(),
             tags: None,
+            pin: None,
         }
     }
 
     pub fn touch(&mut self) {
         self.accessed_at = SystemTime::now();
         self.access_counter += 1;
+    }
+}
+
+impl From<String> for Item {
+    fn from(value: String) -> Self {
+        Self::new(value)
     }
 }
 
@@ -245,10 +261,10 @@ impl Default for Entries {
     }
 }
 
-fn _drop_list_values<T>(from_idx: usize, to_idx: Option<usize>, list: &mut LinkedList<T>) {
-    let to_idx = to_idx.unwrap_or(from_idx + 1);
-    let mut upper = list.split_off(from_idx);
-    let mut rest = upper.split_off(to_idx - from_idx);
+fn _drop_list_values<T>(from_index: usize, to_index: Option<usize>, list: &mut LinkedList<T>) {
+    let to_index = to_index.unwrap_or(from_index + 1);
+    let mut upper = list.split_off(from_index);
+    let mut rest = upper.split_off(to_index - from_index);
     list.append(&mut rest);
 }
 
@@ -259,7 +275,7 @@ where
     list.iter()
         .enumerate()
         .find(|&(_, h)| h == value)
-        .map(|(idx, _)| idx)
+        .map(|(index, _)| index)
 }
 
 impl Entries {
@@ -274,22 +290,22 @@ impl Entries {
     pub fn insert(&mut self, value: String) {
         let hash = calculate_hash(&value);
 
-        if let Some(idx) = _find_list_element(&hash, &self.hashes) {
-            let mut values_tail = self.values.split_off(idx);
+        if let Some(index) = _find_list_element(&hash, &self.hashes) {
+            let mut values_tail = self.values.split_off(index);
             if let Some(mut elt) = values_tail.pop_front() {
                 elt.touch();
                 self.values.push_front(elt);
                 self.values.append(&mut values_tail);
             }
 
-            let mut hashes_tail = self.hashes.split_off(idx);
+            let mut hashes_tail = self.hashes.split_off(index);
             if let Some(elt) = hashes_tail.pop_front() {
                 self.hashes.push_front(elt);
                 self.hashes.append(&mut hashes_tail);
             }
         } else {
             self.hashes.push_front(hash);
-            self.values.push_front(Item::new(value));
+            self.values.push_front(value.into());
         }
     }
 
@@ -298,16 +314,16 @@ impl Entries {
         _drop_list_values(from_index, to_index, &mut self.hashes);
     }
 
-    pub fn get(&mut self, idx: usize) -> Option<&mut Item> {
+    pub fn get(&mut self, index: usize) -> Option<&mut Item> {
         self.values
             .iter_mut()
             .enumerate()
-            .find(|(i, _)| idx == *i)
+            .find(|(i, _)| index == *i)
             .map(|(_, item)| item)
     }
 
-    pub fn get_value(&mut self, idx: usize) -> Option<String> {
-        self.get(idx).map(|item| item.value.clone())
+    pub fn get_value(&mut self, index: usize) -> Option<String> {
+        self.get(index).map(|item| item.value.clone())
     }
 
     pub fn select_by_range(
@@ -321,8 +337,8 @@ impl Entries {
         self.values
             .iter()
             .enumerate()
-            .filter(|(idx, _item)| *idx >= from_index && *idx < to_index)
-            .map(|(idx, item)| (idx, item.clone()))
+            .filter(|(index, _item)| *index >= from_index && *index < to_index)
+            .map(|(index, item)| (index, item.clone()))
             .collect()
     }
 
@@ -333,7 +349,7 @@ impl Entries {
             .iter()
             .enumerate()
             .filter(|(_, item)| item.value.contains(val))
-            .map(|(idx, item)| (idx, item.clone()))
+            .map(|(index, item)| (index, item.clone()))
             .collect()
     }
 
@@ -348,11 +364,45 @@ impl Entries {
                     false
                 }
             })
-            .map(|(idx, item)| (idx, item.clone()))
+            .map(|(index, item)| (index, item.clone()))
             .collect()
     }
 
-    pub fn tags(&self) -> HashSet<String> {
+    pub fn select_by_pin(&self, pin: char) -> Vec<(usize, Item)> {
+        if let Some((index, item)) = self
+            .values
+            .iter()
+            .enumerate()
+            .find(|(_, item)| item.pin.unwrap_or(' ') == pin)
+        {
+            vec![(index, item.clone())]
+        } else {
+            vec![]
+        }
+    }
+    pub fn tag(&mut self, index: usize, tag: String) -> bool {
+        if let Some(item) = self.get(index) {
+            item.tags
+                .get_or_insert(HashSet::<String>::new())
+                .insert(tag);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn untag(&mut self, index: usize, tag: String) -> bool {
+        if let Some(item) = self.get(index) {
+            match item.tags.as_mut() {
+                Some(ts) => ts.remove(&tag),
+                _ => true,
+            }
+        } else {
+            false
+        }
+    }
+
+    pub fn get_tags(&self) -> HashSet<String> {
         let mut result: HashSet<String> = HashSet::new();
         for item in self.values.iter() {
             if let Some(tags) = item.tags.as_ref() {
@@ -360,6 +410,18 @@ impl Entries {
             }
         }
         result
+    }
+
+    pub fn pin(&mut self, index: usize, pin: char) {
+        if let Some(item) = self.get(index) {
+            item.pin.replace(pin);
+        }
+    }
+
+    pub fn unpin(&mut self, index: usize) {
+        if let Some(item) = self.get(index) {
+            item.pin.take();
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -372,6 +434,10 @@ impl Entries {
             )
         }
         values_len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 

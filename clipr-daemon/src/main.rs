@@ -8,7 +8,6 @@ use cocoa::appkit::{NSPasteboard, NSPasteboardTypeString};
 use cocoa::base::nil;
 use cocoa::foundation::{NSInteger, NSString};
 use rustyline::Editor;
-use std::collections::HashSet;
 use std::fs::File as SyncFile;
 use std::io::prelude::*;
 use std::sync::Arc;
@@ -263,10 +262,7 @@ async fn handle_call(
         }
         clipr_common::Command::Tag { index, tag } => {
             let mut entries = state.entries.lock().unwrap();
-            if let Some(item) = entries.get(index) {
-                item.tags
-                    .get_or_insert(HashSet::<String>::new())
-                    .insert(tag);
+            if entries.tag(index, tag) {
                 clipr_common::Payload::Ok
             } else {
                 clipr_common::Payload::Message {
@@ -276,17 +272,23 @@ async fn handle_call(
         }
         clipr_common::Command::Untag { index, tag } => {
             let mut entries = state.entries.lock().unwrap();
-            if let Some(item) = entries.get(index) {
-                match item.tags.as_mut() {
-                    Some(ts) => ts.remove(&tag),
-                    _ => true,
-                };
+            if entries.untag(index, tag) {
                 clipr_common::Payload::Ok
             } else {
                 clipr_common::Payload::Message {
                     value: format!("item at {index:?} not found"),
                 }
             }
+        }
+        clipr_common::Command::Pin { index, pin } => {
+            let mut entries = state.entries.lock().unwrap();
+            entries.pin(index, pin);
+            clipr_common::Payload::Ok
+        }
+        clipr_common::Command::Unpin { index } => {
+            let mut entries = state.entries.lock().unwrap();
+            entries.unpin(index);
+            clipr_common::Payload::Ok
         }
         clipr_common::Command::Select { value } => {
             let entries = state.entries.lock().unwrap();
@@ -306,13 +308,19 @@ async fn handle_call(
                     value: items,
                     preview_length: None,
                 }
+            } else if value[0] == "pin" {
+                let items = entries.select_by_pin((value[1]).to_string().chars().next().unwrap());
+                clipr_common::Payload::List {
+                    value: items,
+                    preview_length: None,
+                }
             } else {
                 clipr_common::Payload::Ok
             }
         }
         clipr_common::Command::Tags => {
             let entries = state.entries.lock().unwrap();
-            let tags = entries.tags();
+            let tags = entries.get_tags();
             let mut ts = tags.into_iter().collect::<Vec<String>>();
             ts.sort();
             clipr_common::Payload::Value {
