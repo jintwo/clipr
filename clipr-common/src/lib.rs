@@ -99,6 +99,9 @@ pub enum Command {
     Save,
     Load,
     Select {
+        #[clap(long)]
+        set: bool,
+
         #[clap(last = true)]
         value: Vec<String>,
     },
@@ -413,6 +416,13 @@ impl Entries {
     }
 
     pub fn pin(&mut self, index: usize, pin: char) {
+        self.values.iter_mut().for_each(|item| match item.pin {
+            Some(p) if p == pin => {
+                item.pin.take();
+            }
+            _ => {}
+        });
+
         if let Some(item) = self.get(index) {
             item.pin.replace(pin);
         }

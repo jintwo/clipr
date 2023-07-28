@@ -282,7 +282,7 @@ async fn handle_call(
         }
         clipr_common::Command::Pin { index, pin } => {
             let mut entries = state.entries.lock().unwrap();
-            entries.pin(index, pin);
+            entries.pin(index, pin.to_uppercase().next().unwrap());
             clipr_common::Payload::Ok
         }
         clipr_common::Command::Unpin { index } => {
@@ -290,32 +290,40 @@ async fn handle_call(
             entries.unpin(index);
             clipr_common::Payload::Ok
         }
-        clipr_common::Command::Select { value } => {
+        clipr_common::Command::Select { value, set } => {
             let entries = state.entries.lock().unwrap();
             if value.len() < 2 {
                 clipr_common::Payload::Message {
                     value: "invalid args".to_string(),
                 }
-            } else if value[0] == "value" {
-                let items = entries.select_by_value((value[1]).to_string());
-                clipr_common::Payload::List {
-                    value: items,
-                    preview_length: None,
-                }
-            } else if value[0] == "tag" {
-                let items = entries.select_by_tag((value[1]).to_string());
-                clipr_common::Payload::List {
-                    value: items,
-                    preview_length: None,
-                }
-            } else if value[0] == "pin" {
-                let items = entries.select_by_pin((value[1]).to_string().chars().next().unwrap());
-                clipr_common::Payload::List {
-                    value: items,
-                    preview_length: None,
-                }
             } else {
-                clipr_common::Payload::Ok
+                let items = if value[0] == "value" {
+                    entries.select_by_value((value[1]).to_string())
+                } else if value[0] == "tag" {
+                    entries.select_by_tag((value[1]).to_string())
+                } else if value[0] == "pin" {
+                    entries.select_by_pin(
+                        (value[1])
+                            .to_string()
+                            .to_uppercase()
+                            .chars()
+                            .next()
+                            .unwrap(),
+                    )
+                } else {
+                    vec![]
+                };
+
+                if set && !items.is_empty() {
+                    let (_, item) = &items[0];
+                    unsafe { set_current_entry(item.value.clone()) };
+                    clipr_common::Payload::Ok
+                } else {
+                    clipr_common::Payload::List {
+                        value: items,
+                        preview_length: None,
+                    }
+                }
             }
         }
         clipr_common::Command::Tags => {
