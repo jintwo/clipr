@@ -102,8 +102,16 @@ pub enum Command {
         #[clap(long)]
         set: bool,
 
-        #[clap(last = true)]
-        value: Vec<String>,
+        // #[clap(last = true)]
+        // value: Vec<String>,
+        #[clap(long)]
+        pin: Option<String>,
+
+        #[clap(long)]
+        tag: Option<String>,
+
+        #[clap(long)]
+        value: Option<String>,
     },
     Help,
     Quit,
