@@ -10,6 +10,6 @@ USAGE:
  untag index tag
  get index
  insert filename
- select -- 'value'/'tag' str
+ select [[--pin P] [--tag TAG [--value VAL]] [--set]]
  help
  quit

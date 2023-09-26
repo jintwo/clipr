@@ -134,7 +134,7 @@
   "Filter entries by tag"
   (interactive (clipr--read-all-tags))
   (if (> (length tag) 0)
-      (setq clipr--query-cmd (format "select -- tag '%s'" tag))
+      (setq clipr--query-cmd (format "select --tag '%s'" tag))
     (setq clipr--query-cmd clipr--default-query-cmd))
   (clipr-refresh))
 
@@ -147,7 +147,7 @@
 (defun clipr-jump-to-tag (tag)
   "Jump to tag"
   (interactive (clipr--read-all-tags))
-  (let ((pos (plist-get (car (clipr-cmd (format "select -- tag '%s'" tag))) :pos)))
+  (let ((pos (plist-get (car (clipr-cmd (format "select --tag '%s'" tag))) :pos)))
     (goto-line (+ 1 pos))))
 
 (defun clipr-save ()

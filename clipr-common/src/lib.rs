@@ -49,6 +49,7 @@ pub enum Payload {
         value: Option<String>,
     },
     Message {
+        // TODO: drop me?
         value: String,
     },
     Stop,
@@ -349,6 +350,55 @@ impl Entries {
             .iter()
             .enumerate()
             .filter(|(index, _item)| *index >= from_index && *index < to_index)
+            .map(|(index, item)| (index, item.clone()))
+            .collect()
+    }
+
+    pub fn select(
+        &self,
+        pin: Option<char>,
+        tag: Option<String>,
+        value: Option<String>,
+    ) -> Vec<(usize, Item)> {
+        // return ALL or NONE?
+        if pin.is_none() && tag.is_none() && value.is_none() {
+            return vec![];
+        };
+
+        if let Some(c) = pin {
+            return self.select_by_pin(c);
+        }
+
+        let pred: Box<dyn Fn(&(usize, &Item)) -> bool> = match (tag, value) {
+            (Some(t), Some(v)) => Box::new(move |(_idx, item): &(usize, &Item)| {
+                let mut pass = false;
+
+                if let Some(tags) = &item.tags {
+                    pass = tags.get(&t).is_some();
+                }
+
+                pass &= item.value.contains(&v);
+                pass
+            }),
+            (Some(t), None) => Box::new(move |(_idx, item): &(usize, &Item)| {
+                let mut pass = false;
+
+                if let Some(tags) = &item.tags {
+                    pass = tags.get(&t).is_some();
+                }
+
+                pass
+            }),
+            (None, Some(v)) => {
+                Box::new(move |(_idx, item): &(usize, &Item)| item.value.contains(&v))
+            }
+            (None, None) => Box::new(|(_idx, _item): &(usize, &Item)| false),
+        };
+
+        self.values
+            .iter()
+            .enumerate()
+            .filter(pred)
             .map(|(index, item)| (index, item.clone()))
             .collect()
     }

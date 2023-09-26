@@ -2,3 +2,4 @@ host = "127.0.0.1"
 port = 1515
 interactive = true
 db = "./db.json"
+max_entries = 128
