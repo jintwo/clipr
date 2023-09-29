@@ -7,9 +7,8 @@ edition = "2021"
 anyhow = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
-async-std = { workspace = true }
 shellwords = { workspace = true }
-surf = { workspace = true }
+reqwest = { workspace = true }
 clipr-common = { path = "../clipr-common" }
 emacs = "0.18.0"
 

@@ -1,19 +1,17 @@
 use anyhow::Result;
-use async_std::channel::{bounded, Receiver, Sender};
-use async_std::fs::File;
-use async_std::prelude::*;
-use async_std::task;
 use clap::Parser;
 use cocoa::appkit::{NSPasteboard, NSPasteboardTypeString};
 use cocoa::base::nil;
 use cocoa::foundation::{NSInteger, NSString};
 use rustyline::Editor;
-use std::fs::File as SyncFile;
-use std::io::prelude::*;
+use socket2::{Domain, Socket, Type};
+use std::fs::File;
+use std::io::{prelude::*, BufReader};
+use std::net::{SocketAddr, TcpListener};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
+use std::thread;
 use std::time::Duration;
-use tide::prelude::*;
-use tide::Body;
 
 static USAGE: &str = include_str!("usage.txt");
 
@@ -41,11 +39,11 @@ unsafe fn set_current_entry(s: String) {
     pb.setString_forType(value, NSPasteboardTypeString);
 }
 
-async fn clipboard_sync(sender: Sender<clipr_common::Request>) {
+fn clipboard_sync(sender: Sender<clipr_common::Request>) {
     let mut last_hash: u64 = 0;
     let mut last_change_count: i64 = 0;
     loop {
-        task::sleep(Duration::from_millis(500)).await;
+        thread::sleep(Duration::from_millis(500));
         let change_count = unsafe { get_change_count() };
         if last_change_count == change_count {
             continue;
@@ -61,13 +59,13 @@ async fn clipboard_sync(sender: Sender<clipr_common::Request>) {
                 }
 
                 last_hash = hash;
-                sender.send(clipr_common::Request::Sync(val)).await.unwrap();
+                sender.send(clipr_common::Request::Sync(val)).unwrap();
             }
         }
     }
 }
 
-async fn repl_loop(sender: Sender<clipr_common::Request>) {
+fn repl_loop(sender: Sender<clipr_common::Request>) {
     let mut rl = Editor::<()>::new().unwrap();
     loop {
         let readline = rl.readline(":> ");
@@ -88,7 +86,7 @@ async fn repl_loop(sender: Sender<clipr_common::Request>) {
                     Err(_) => clipr_common::Command::Help,
                 };
 
-                match clipr_common::Request::send_cmd(&sender, cmd).await {
+                match clipr_common::Request::send_cmd(&sender, cmd) {
                     Some(clipr_common::Response::Stop) => return,
                     Some(clipr_common::Response::Payload(val)) => {
                         println!("{}", String::from(&val))
@@ -96,47 +94,78 @@ async fn repl_loop(sender: Sender<clipr_common::Request>) {
                     _ => continue,
                 }
             }
-            Err(_) => sender.send(clipr_common::Request::Quit).await.unwrap(),
+            Err(_) => sender.send(clipr_common::Request::Quit).unwrap(),
         }
     }
 }
 
-async fn empty_fg_loop(sender: Sender<clipr_common::Request>) {
+fn empty_fg_loop(sender: Sender<clipr_common::Request>) {
     let mut rl = Editor::<()>::new().unwrap();
     loop {
         let readline = rl.readline("");
         match readline {
             Ok(_) => continue,
             Err(_) => {
-                sender.send(clipr_common::Request::Quit).await.unwrap();
+                sender.send(clipr_common::Request::Quit).unwrap();
             }
         }
     }
 }
 
-async fn http_server(listen_on: String, sender: Sender<clipr_common::Request>) -> Result<()> {
-    let mut app = tide::with_state(sender);
-    app.at("/command").post(
-        |mut req: tide::Request<Sender<clipr_common::Request>>| async move {
-            // TODO: handle invalid command properly
-            let cmd: clipr_common::Command = req.body_json().await?;
-
-            let sender = req.state();
-
-            match clipr_common::Request::send_cmd(sender, cmd).await {
-                Some(clipr_common::Response::Payload(val)) => Body::from_json(&val),
-                _ => Body::from_json(&json!({})),
+fn http_server(listen_on: String, sender: Sender<clipr_common::Request>) -> Result<()> {
+    let socket = Socket::new(Domain::IPV4, Type::STREAM, None)?;
+    socket.set_reuse_port(true)?;
+    socket.set_reuse_address(true)?;
+    let address: SocketAddr = listen_on.parse()?;
+    socket.bind(&address.into());
+    socket.listen(10)?;
+    let listener: TcpListener = socket.into();
+    for stream in listener.incoming() {
+        let mut stream = stream?;
+        let mut buf_reader = BufReader::new(&mut stream);
+        // TODO: fix it
+        let mut buffer = [0; 1024];
+        let size = buf_reader.read(&mut buffer)?;
+        let mut headers = [httparse::EMPTY_HEADER; 16];
+        let mut req = httparse::Request::new(&mut headers);
+        let offset = req.parse(&buffer[..size])?.unwrap();
+        let content_length_pre = size - offset;
+        if let Some("POST") = req.method {
+            if let Some(p) = req.path {
+                let response = if p == "/command" {
+                    let content_length: usize = String::from_utf8_lossy(
+                        req.headers
+                            .iter()
+                            .find(|&h| h.name.to_lowercase() == "content-length")
+                            .unwrap()
+                            .value,
+                    )
+                    .parse()?;
+                    // TODO: content_length_pre == content_length
+                    let mut body = &buffer[offset..];
+                    let cmd: clipr_common::Command =
+                        serde_json::from_slice(&body[..content_length])?;
+                    let rep_body = match clipr_common::Request::send_cmd(&sender, cmd) {
+                        Some(clipr_common::Response::Payload(val)) => serde_json::to_string(&val)?,
+                        _ => String::from("{}"),
+                    };
+                    let length = rep_body.len();
+                    format!("HTTP/1.1 200 OK\r\nContent-Length: {length}\r\n\r\n{rep_body}")
+                } else {
+                    String::from("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
+                };
+                stream.write_all(response.as_bytes())?;
+                stream.flush()?;
             }
-        },
-    );
-    app.listen(listen_on).await?;
+        }
+    }
     Ok(())
 }
 
-async fn event_loop(state: Arc<clipr_common::State>, receiver: Receiver<clipr_common::Request>) {
+fn event_loop(state: Arc<clipr_common::State>, receiver: Receiver<clipr_common::Request>) {
     let s = state.clone();
     loop {
-        if let Ok(msg) = receiver.recv().await {
+        if let Ok(msg) = receiver.recv() {
             match msg {
                 clipr_common::Request::Quit => return,
                 clipr_common::Request::Sync(value) => {
@@ -144,13 +173,12 @@ async fn event_loop(state: Arc<clipr_common::State>, receiver: Receiver<clipr_co
                     entries.insert(value)
                 }
                 clipr_common::Request::Command(cmd, sender) => {
-                    let payload = handle_call(s.clone(), cmd).await.unwrap();
+                    let payload = handle_call(s.clone(), cmd).unwrap();
                     match payload {
                         clipr_common::Payload::Stop => return,
                         _ => {
                             sender
                                 .send(clipr_common::Response::Payload(payload))
-                                .await
                                 .unwrap();
                             continue;
                         }
@@ -161,27 +189,27 @@ async fn event_loop(state: Arc<clipr_common::State>, receiver: Receiver<clipr_co
     }
 }
 
-async fn save_db(state: Arc<clipr_common::State>) -> Result<()> {
+fn save_db(state: Arc<clipr_common::State>) -> Result<()> {
     let db_path = state.config.db.as_ref().unwrap();
-    let mut file = File::create(db_path).await?;
-    let data = serde_json::to_string_pretty(&state.entries)?;
-    file.write_all(data.as_bytes()).await?;
-    Ok(())
-}
-
-fn save_db_sync(state: Arc<clipr_common::State>) -> Result<()> {
-    let db_path = state.config.db.as_ref().unwrap();
-    let mut file = SyncFile::create(db_path)?;
+    let mut file = File::create(db_path)?;
     let data = serde_json::to_string_pretty(&state.entries)?;
     file.write_all(data.as_bytes())?;
     Ok(())
 }
 
-async fn load_db(state: Arc<clipr_common::State>) -> Result<()> {
+fn save_db_sync(state: Arc<clipr_common::State>) -> Result<()> {
     let db_path = state.config.db.as_ref().unwrap();
-    let mut file = File::open(db_path).await?;
+    let mut file = File::create(db_path)?;
+    let data = serde_json::to_string_pretty(&state.entries)?;
+    file.write_all(data.as_bytes())?;
+    Ok(())
+}
+
+fn load_db(state: Arc<clipr_common::State>) -> Result<()> {
+    let db_path = state.config.db.as_ref().unwrap();
+    let mut file = File::open(db_path)?;
     let mut buffer = String::new();
-    file.read_to_string(&mut buffer).await?;
+    file.read_to_string(&mut buffer)?;
     let data: clipr_common::Entries = serde_json::from_str(buffer.as_str())?;
     let mut entries = state.entries.lock().unwrap();
     *entries = data;
@@ -190,7 +218,7 @@ async fn load_db(state: Arc<clipr_common::State>) -> Result<()> {
 }
 
 // TODO: use state.handle_call + Mutex around State
-async fn handle_call(
+fn handle_call(
     state: Arc<clipr_common::State>,
     cmd: clipr_common::Command,
 ) -> Result<clipr_common::Payload> {
@@ -214,11 +242,11 @@ async fn handle_call(
             }
         }
         clipr_common::Command::Save => {
-            save_db(state.clone()).await.unwrap();
+            save_db(state.clone()).unwrap();
             clipr_common::Payload::Ok
         }
         clipr_common::Command::Load => {
-            load_db(state.clone()).await.unwrap();
+            load_db(state.clone()).unwrap();
             clipr_common::Payload::Ok
         }
         clipr_common::Command::Get { index } => {
@@ -235,9 +263,9 @@ async fn handle_call(
             clipr_common::Payload::Ok
         }
         clipr_common::Command::Insert { filename } => {
-            let mut file = File::open(filename).await?;
+            let mut file = File::open(filename)?;
             let mut buffer = String::new();
-            file.read_to_string(&mut buffer).await?;
+            file.read_to_string(&mut buffer)?;
             unsafe { set_current_entry(buffer) };
             clipr_common::Payload::Ok
         }
@@ -343,16 +371,29 @@ fn main() -> Result<()> {
     let args = clipr_common::Args::parse();
     let config = clipr_common::Config::load_from_args(&args)?;
     let state = Arc::new(clipr_common::State::new(config));
-    let (sender, receiver) = bounded::<clipr_common::Request>(1);
-    task::spawn(clipboard_sync(sender.clone()));
-    task::spawn(http_server(state.config.listen_on(), sender.clone()));
-    if !state.config.interactive.unwrap_or(false) {
-        task::spawn(empty_fg_loop(sender));
-    } else {
-        task::spawn(repl_loop(sender));
+    let (sender, receiver) = channel::<clipr_common::Request>();
+    {
+        let sender = sender.clone();
+        thread::spawn(move || clipboard_sync(sender));
     }
-    task::block_on(event_loop(state.clone(), receiver));
+    {
+        let sender = sender.clone();
+        let state = state.clone();
+        thread::spawn(move || loop {
+            let result = http_server(state.config.listen_on(), sender.clone());
+            println!("server died with {:?}", result);
+        });
+    }
+    {
+        let sender = sender.clone();
+        if !state.config.interactive.unwrap_or(false) {
+            thread::spawn(move || empty_fg_loop(sender));
+        } else {
+            thread::spawn(move || repl_loop(sender));
+        }
+    }
+    event_loop(state.clone(), receiver);
     // sync state at exit
-    save_db_sync(state)?;
+    // save_db_sync(state)?;
     Ok(())
 }

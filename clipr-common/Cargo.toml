@@ -7,6 +7,5 @@ edition = "2021"
 anyhow = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
-async-std = { workspace = true }
 toml = { workspace = true }
 serde = { workspace = true }

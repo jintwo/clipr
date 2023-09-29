@@ -97,15 +97,19 @@ fn cmd(env: &Env, value: String) -> emacs::Result<emacs::Value<'_>> {
         Err(_) => clipr_common::Command::Help,
     };
 
-    match async_std::task::block_on(call(config, cmd)) {
+    match call(config, cmd) {
         Ok(payload) => payload_to_lisp(&payload, env),
         Err(err) => bail!(err),
     }
 }
 
-async fn call(config: Arc<Config>, cmd: Command) -> anyhow::Result<Payload, surf::Error> {
+// TODO: move to common (http?)
+fn call(config: Arc<Config>, cmd: Command) -> Result<Payload> {
     let uri = format!("http://{}/command", config.listen_on());
-    let req = surf::post(uri).body_json(&cmd)?;
-    let rep: Payload = req.recv_json().await?;
+    let rep = reqwest::blocking::Client::new()
+        .post(uri)
+        .json(&cmd)
+        .send()?
+        .json::<Payload>()?;
     Ok(rep)
 }

@@ -6,12 +6,12 @@ edition = "2021"
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true }
-async-std = { workspace = true }
 serde_json = { workspace = true }
 shellwords = { workspace = true }
 clipr-common = { path = "../clipr-common" }
-tide = "0.16.0"
 cocoa = { version = "0.24.0" }
 objc = "0.2.3"
 rustyline = "10.0.0"
 env_logger = "0.9.0"
+httparse = "1.8.0"
+socket2 = "0.5.4"

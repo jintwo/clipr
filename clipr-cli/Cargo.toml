@@ -6,6 +6,5 @@ edition = "2021"
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true }
-async-std = { workspace = true }
-surf = { workspace = true }
+reqwest = { workspace = true }
 clipr-common = { path = "../clipr-common" }

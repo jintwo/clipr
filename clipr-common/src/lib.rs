@@ -1,5 +1,4 @@
 use anyhow::Result;
-use async_std::channel::{bounded, Sender};
 use chrono::prelude::*;
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
@@ -9,6 +8,7 @@ use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{channel, Sender};
 use std::sync::Mutex;
 use std::time::SystemTime;
 
@@ -21,10 +21,10 @@ pub enum Request {
 }
 
 impl Request {
-    pub async fn send_cmd(sender: &Sender<Request>, cmd: Command) -> Option<Response> {
-        let (tx, rx) = bounded::<Response>(1);
-        sender.send(Request::Command(cmd, tx)).await.unwrap();
-        rx.recv().await.ok()
+    pub fn send_cmd(sender: &Sender<Request>, cmd: Command) -> Option<Response> {
+        let (tx, rx) = channel::<Response>();
+        sender.send(Request::Command(cmd, tx)).unwrap();
+        rx.recv().ok()
     }
 }
 
