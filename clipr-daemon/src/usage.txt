@@ -1,15 +1,15 @@
 USAGE:
- list ?from-index ?to-index
+ list [from-index] [to-index]
  count
  save
  load
- add -- str [?str...]
- del index ?to-index
+ add -- str [str ...]
+ del index [to-index]
  set index
  tag index tag
  untag index tag
  get index
  insert filename
- select [[--pin P] [--tag TAG [--value VAL]] [--set]]
+ select [--pin P] [--tag TAG ...] [--value VAL] [--set]
  help
  quit

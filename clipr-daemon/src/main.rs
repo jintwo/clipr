@@ -18,40 +18,39 @@ use tide::Body;
 static USAGE: &str = include_str!("usage.txt");
 
 unsafe fn get_change_count() -> NSInteger {
-    let pb = NSPasteboard::generalPasteboard(nil);
-    pb.changeCount()
+    NSPasteboard::generalPasteboard(nil).changeCount()
 }
 
 unsafe fn get_current_entry() -> Option<String> {
-    let pb = NSPasteboard::generalPasteboard(nil);
-    let val = pb.stringForType(NSPasteboardTypeString);
-    if val == nil {
-        return None;
+    match NSPasteboard::generalPasteboard(nil).stringForType(NSPasteboardTypeString) {
+        nil => None,
+        value => {
+            let bytes = value.UTF8String() as *const u8;
+            let length = value.len();
+            let string = std::str::from_utf8(std::slice::from_raw_parts(bytes, length)).unwrap();
+            Some(String::from(string))
+        }
     }
-
-    let bytes = val.UTF8String() as *const u8;
-    Some(String::from(
-        std::str::from_utf8(std::slice::from_raw_parts(bytes, val.len())).unwrap(),
-    ))
 }
 
 unsafe fn set_current_entry(s: String) {
     let pb = NSPasteboard::generalPasteboard(nil);
     pb.clearContents();
-    let val = NSString::alloc(nil).init_str(&s);
-    pb.setString_forType(val, NSPasteboardTypeString);
+
+    let value = NSString::alloc(nil).init_str(&s);
+    pb.setString_forType(value, NSPasteboardTypeString);
 }
 
 async fn clipboard_sync(sender: Sender<clipr_common::Request>) {
     let mut last_hash: u64 = 0;
-    let mut last_cc: i64 = 0;
+    let mut last_change_count: i64 = 0;
     loop {
         task::sleep(Duration::from_millis(500)).await;
-        let cc = unsafe { get_change_count() };
-        if last_cc == cc {
+        let change_count = unsafe { get_change_count() };
+        if last_change_count == change_count {
             continue;
         } else {
-            last_cc = cc;
+            last_change_count = change_count;
         }
         match unsafe { get_current_entry() } {
             None => continue,
@@ -299,7 +298,7 @@ async fn handle_call(
         } => {
             let entries = state.entries.lock().unwrap();
 
-            if pin.is_none() && tag.is_none() && value.is_none() {
+            if pin.is_none() && tag.is_empty() && value.is_none() {
                 return Ok(clipr_common::Payload::Message {
                     value: String::from("invalid args"),
                 });

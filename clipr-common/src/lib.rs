@@ -108,8 +108,8 @@ pub enum Command {
         #[clap(long)]
         pin: Option<String>,
 
-        #[clap(long)]
-        tag: Option<String>,
+        #[clap(long, action = clap::ArgAction::Append)]
+        tag: Vec<String>,
 
         #[clap(long)]
         value: Option<String>,
@@ -357,11 +357,11 @@ impl Entries {
     pub fn select(
         &self,
         pin: Option<char>,
-        tag: Option<String>,
+        tag: Vec<String>,
         value: Option<String>,
     ) -> Vec<(usize, Item)> {
         // return ALL or NONE?
-        if pin.is_none() && tag.is_none() && value.is_none() {
+        if pin.is_none() && tag.is_empty() && value.is_none() {
             return vec![];
         };
 
@@ -369,36 +369,25 @@ impl Entries {
             return self.select_by_pin(c);
         }
 
-        let pred: Box<dyn Fn(&(usize, &Item)) -> bool> = match (tag, value) {
-            (Some(t), Some(v)) => Box::new(move |(_idx, item): &(usize, &Item)| {
-                let mut pass = false;
+        let mut items_iter: Box<dyn Iterator<Item = (usize, &Item)>> =
+            Box::new(self.values.iter().enumerate());
 
+        if !tag.is_empty() {
+            let tags_set: HashSet<String> = tag.into_iter().collect();
+            items_iter = Box::new(items_iter.filter(move |(_, item)| {
                 if let Some(tags) = &item.tags {
-                    pass = tags.get(&t).is_some();
+                    tags.is_superset(&tags_set)
+                } else {
+                    false
                 }
+            }));
+        }
 
-                pass &= item.value.contains(&v);
-                pass
-            }),
-            (Some(t), None) => Box::new(move |(_idx, item): &(usize, &Item)| {
-                let mut pass = false;
+        if let Some(value) = value {
+            items_iter = Box::new(items_iter.filter(move |(_, item)| item.value.contains(&value)));
+        }
 
-                if let Some(tags) = &item.tags {
-                    pass = tags.get(&t).is_some();
-                }
-
-                pass
-            }),
-            (None, Some(v)) => {
-                Box::new(move |(_idx, item): &(usize, &Item)| item.value.contains(&v))
-            }
-            (None, None) => Box::new(|(_idx, _item): &(usize, &Item)| false),
-        };
-
-        self.values
-            .iter()
-            .enumerate()
-            .filter(pred)
+        items_iter
             .map(|(index, item)| (index, item.clone()))
             .collect()
     }
