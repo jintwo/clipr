@@ -122,6 +122,8 @@ cp clipr-emacs/src/clipr-mode.el <emacs-load-path>/clipr-mode/
 
 * [ ] Multi tag selection
 
+* [ ] Edit inplace
+
 ### Bugs [1/2]
 
 * [X] If there is no changes in PB we still allocating NSString

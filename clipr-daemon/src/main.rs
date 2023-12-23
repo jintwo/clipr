@@ -4,14 +4,14 @@ use cocoa::appkit::{NSPasteboard, NSPasteboardTypeString};
 use cocoa::base::nil;
 use cocoa::foundation::{NSInteger, NSString};
 use rustyline::Editor;
-use socket2::{Domain, Socket, Type};
 use std::fs::File;
-use std::io::{prelude::*, BufReader};
-use std::net::{SocketAddr, TcpListener};
+use std::io::prelude::*;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+
+mod http;
 
 static USAGE: &str = include_str!("usage.txt");
 
@@ -110,56 +110,6 @@ fn empty_fg_loop(sender: Sender<clipr_common::Request>) {
             }
         }
     }
-}
-
-fn http_server(listen_on: String, sender: Sender<clipr_common::Request>) -> Result<()> {
-    let socket = Socket::new(Domain::IPV4, Type::STREAM, None)?;
-    socket.set_reuse_port(true)?;
-    socket.set_reuse_address(true)?;
-    let address: SocketAddr = listen_on.parse()?;
-    socket.bind(&address.into());
-    socket.listen(10)?;
-    let listener: TcpListener = socket.into();
-    for stream in listener.incoming() {
-        let mut stream = stream?;
-        let mut buf_reader = BufReader::new(&mut stream);
-        // TODO: fix it
-        let mut buffer = [0; 1024];
-        let size = buf_reader.read(&mut buffer)?;
-        let mut headers = [httparse::EMPTY_HEADER; 16];
-        let mut req = httparse::Request::new(&mut headers);
-        let offset = req.parse(&buffer[..size])?.unwrap();
-        let content_length_pre = size - offset;
-        if let Some("POST") = req.method {
-            if let Some(p) = req.path {
-                let response = if p == "/command" {
-                    let content_length: usize = String::from_utf8_lossy(
-                        req.headers
-                            .iter()
-                            .find(|&h| h.name.to_lowercase() == "content-length")
-                            .unwrap()
-                            .value,
-                    )
-                    .parse()?;
-                    // TODO: content_length_pre == content_length
-                    let mut body = &buffer[offset..];
-                    let cmd: clipr_common::Command =
-                        serde_json::from_slice(&body[..content_length])?;
-                    let rep_body = match clipr_common::Request::send_cmd(&sender, cmd) {
-                        Some(clipr_common::Response::Payload(val)) => serde_json::to_string(&val)?,
-                        _ => String::from("{}"),
-                    };
-                    let length = rep_body.len();
-                    format!("HTTP/1.1 200 OK\r\nContent-Length: {length}\r\n\r\n{rep_body}")
-                } else {
-                    String::from("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
-                };
-                stream.write_all(response.as_bytes())?;
-                stream.flush()?;
-            }
-        }
-    }
-    Ok(())
 }
 
 fn event_loop(state: Arc<clipr_common::State>, receiver: Receiver<clipr_common::Request>) {
@@ -380,7 +330,7 @@ fn main() -> Result<()> {
         let sender = sender.clone();
         let state = state.clone();
         thread::spawn(move || loop {
-            let result = http_server(state.config.listen_on(), sender.clone());
+            let result = http::server(state.config.listen_on(), sender.clone());
             println!("server died with {:?}", result);
         });
     }
