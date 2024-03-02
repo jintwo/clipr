@@ -202,6 +202,8 @@ dependencies = [
  "clap",
  "clipr-common",
  "reqwest",
+ "serde_json",
+ "socket2 0.5.4",
 ]
 
 [[package]]

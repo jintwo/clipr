@@ -65,7 +65,7 @@ fn clipboard_sync(sender: Sender<clipr_common::Request>) {
     }
 }
 
-fn repl_loop(sender: Sender<clipr_common::Request>) {
+fn cmd_line_loop(sender: Sender<clipr_common::Request>) {
     let mut rl = Editor::<()>::new().unwrap();
     loop {
         let readline = rl.readline(":> ");
@@ -339,7 +339,7 @@ fn main() -> Result<()> {
         if !state.config.interactive.unwrap_or(false) {
             thread::spawn(move || empty_fg_loop(sender));
         } else {
-            thread::spawn(move || repl_loop(sender));
+            thread::spawn(move || cmd_line_loop(sender));
         }
     }
     event_loop(state.clone(), receiver);
