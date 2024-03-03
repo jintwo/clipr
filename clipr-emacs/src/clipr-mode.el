@@ -2,7 +2,6 @@
 ;;; Commentary:
 ;;; Code:
 
-(require 'dash)
 (require 'custom)
 (require 'hl-line)
 
@@ -52,7 +51,7 @@
 
 (defun clipr-list-entries ()
   "Get entries for Clipr."
-  (-map
+  (mapcar
    (lambda (entry)
      (let ((pos (plist-get entry :pos))
            (content (plist-get entry :content))
