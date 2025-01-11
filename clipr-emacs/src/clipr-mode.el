@@ -27,6 +27,11 @@
   :type 'integer
   :group 'clipr)
 
+(defcustom clipr-finalize-hook nil
+  "Hook that is run right after Clipr is finalized."
+  :type 'hook
+  :group 'clipr)
+
 (defconst clipr-list-format
   [("Pos" 7 t)
    ("Date" 13 t)
@@ -40,14 +45,17 @@
 
 (defvar clipr--query-cmd clipr--default-query-cmd)
 
-(defun clipr-create ()
-  "Create Clipr."
+(defun clipr-create-buffer ()
   (let* ((clipr-buffer (get-buffer-create clipr-buffer-name))
          (buffer-window (get-buffer-window clipr-buffer)))
     (when (not buffer-window)
-        (with-current-buffer clipr-buffer
-          (funcall 'clipr-mode)))
-    (select-window (display-buffer clipr-buffer))))
+      (with-current-buffer clipr-buffer
+        (funcall 'clipr-mode)))
+    clipr-buffer))
+
+(defun clipr-create ()
+  "Create Clipr."
+  (select-window (display-buffer (clipr-create-buffer))))
 
 (defun clipr-list-entries ()
   "Get entries for Clipr."
@@ -115,7 +123,10 @@
   (interactive)
   (with-current-buffer clipr-buffer-name
     (kill-buffer)
-    (delete-window)))
+    (condition-case nil
+        (delete-window)
+      (error nil)))
+  (run-hooks 'clipr-finalize-hook))
 
 (defun clipr-tag (tag)
   "Tag selected entry."
