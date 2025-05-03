@@ -6,8 +6,8 @@ use cocoa::foundation::{NSInteger, NSString};
 use rustyline::Editor;
 use std::fs::File;
 use std::io::prelude::*;
-use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 use std::time::Duration;
 
@@ -15,28 +15,33 @@ mod http;
 
 static USAGE: &str = include_str!("usage.txt");
 
-unsafe fn get_change_count() -> NSInteger {
-    NSPasteboard::generalPasteboard(nil).changeCount()
+fn get_change_count() -> NSInteger {
+    unsafe { NSPasteboard::generalPasteboard(nil).changeCount() }
 }
 
-unsafe fn get_current_entry() -> Option<String> {
-    match NSPasteboard::generalPasteboard(nil).stringForType(NSPasteboardTypeString) {
-        nil => None,
-        value => {
-            let bytes = value.UTF8String() as *const u8;
-            let length = value.len();
-            let string = std::str::from_utf8(std::slice::from_raw_parts(bytes, length)).unwrap();
-            Some(String::from(string))
+fn get_current_entry() -> Option<String> {
+    unsafe {
+        match NSPasteboard::generalPasteboard(nil).stringForType(NSPasteboardTypeString) {
+            nil => None,
+            value => {
+                let bytes = value.UTF8String() as *const u8;
+                let length = value.len();
+                let string =
+                    std::str::from_utf8(std::slice::from_raw_parts(bytes, length)).unwrap();
+                Some(String::from(string))
+            }
         }
     }
 }
 
-unsafe fn set_current_entry(s: String) {
-    let pb = NSPasteboard::generalPasteboard(nil);
-    pb.clearContents();
+fn set_current_entry(s: String) {
+    unsafe {
+        let pb = NSPasteboard::generalPasteboard(nil);
+        pb.clearContents();
 
-    let value = NSString::alloc(nil).init_str(&s);
-    pb.setString_forType(value, NSPasteboardTypeString);
+        let value = NSString::alloc(nil).init_str(&s);
+        pb.setString_forType(value, NSPasteboardTypeString);
+    }
 }
 
 fn clipboard_sync(sender: Sender<clipr_common::Request>) {
@@ -44,13 +49,13 @@ fn clipboard_sync(sender: Sender<clipr_common::Request>) {
     let mut last_change_count: i64 = 0;
     loop {
         thread::sleep(Duration::from_millis(500));
-        let change_count = unsafe { get_change_count() };
+        let change_count = get_change_count();
         if last_change_count == change_count {
             continue;
         } else {
             last_change_count = change_count;
         }
-        match unsafe { get_current_entry() } {
+        match get_current_entry() {
             None => continue,
             Some(val) => {
                 let hash = clipr_common::calculate_hash(&val);
@@ -209,20 +214,20 @@ fn handle_call(
             }
         }
         clipr_common::Command::Add { value } => {
-            unsafe { set_current_entry(value.join(" ")) };
+            set_current_entry(value.join(" "));
             clipr_common::Payload::Ok
         }
         clipr_common::Command::Insert { filename } => {
             let mut file = File::open(filename)?;
             let mut buffer = String::new();
             file.read_to_string(&mut buffer)?;
-            unsafe { set_current_entry(buffer) };
+            set_current_entry(buffer);
             clipr_common::Payload::Ok
         }
         clipr_common::Command::Set { index } => {
             let mut entries = state.entries.lock().unwrap();
             if let Some(value) = entries.get_value(index) {
-                unsafe { set_current_entry(value) };
+                set_current_entry(value);
                 clipr_common::Payload::Ok
             } else {
                 clipr_common::Payload::Message {
@@ -290,7 +295,7 @@ fn handle_call(
 
             if set && !items.is_empty() {
                 let (_, item) = &items[0];
-                unsafe { set_current_entry(item.value.clone()) };
+                set_current_entry(item.value.clone());
                 clipr_common::Payload::Ok
             } else {
                 clipr_common::Payload::List {
@@ -321,6 +326,10 @@ fn main() -> Result<()> {
     let args = clipr_common::Args::parse();
     let config = clipr_common::Config::load_from_args(&args)?;
     let state = Arc::new(clipr_common::State::new(config));
+
+    // load db at start
+    load_db(state.clone())?;
+
     let (sender, receiver) = channel::<clipr_common::Request>();
     {
         let sender = sender.clone();
@@ -329,9 +338,11 @@ fn main() -> Result<()> {
     {
         let sender = sender.clone();
         let state = state.clone();
-        thread::spawn(move || loop {
-            let result = http::server(state.config.listen_on(), sender.clone());
-            println!("server died with {:?}", result);
+        thread::spawn(move || {
+            loop {
+                let result = http::server(state.config.listen_on(), sender.clone());
+                println!("server died with {:?}", result);
+            }
         });
     }
     {
@@ -342,8 +353,10 @@ fn main() -> Result<()> {
             thread::spawn(move || cmd_line_loop(sender));
         }
     }
+
     event_loop(state.clone(), receiver);
+
     // sync state at exit
-    // save_db_sync(state)?;
+    save_db_sync(state)?;
     Ok(())
 }

@@ -1,15 +1,15 @@
 [package]
 name = "clipr-emacs"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 anyhow = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
 shellwords = { workspace = true }
-reqwest = { workspace = true }
 clipr-common = { path = "../clipr-common" }
+clipr-daemon = { path = "../clipr-daemon" }
 emacs = "0.18.0"
 
 [lib]

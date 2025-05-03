@@ -1,10 +1,12 @@
 use anyhow::bail;
 use chrono::prelude::*;
 use clap::Parser;
-use clipr_common::{shorten, Command, Config, Payload};
+use clipr_common::{Config, Payload, shorten};
+use clipr_daemon::call;
 use emacs::IntoLisp;
 use emacs::{Env, Result, Value};
 use std::path::Path;
+use std::sync::Arc;
 
 // Emacs won't load the module without this.
 emacs::plugin_is_GPL_compatible!();
@@ -87,7 +89,7 @@ fn payload_to_lisp<'a>(payload: &Payload, env: &'a Env) -> emacs::Result<emacs::
 #[emacs::defun]
 fn cmd(env: &Env, value: String) -> emacs::Result<emacs::Value<'_>> {
     let config_path = get_config_path(env)?.into_rust::<String>()?;
-    let config = Config::load_config(Path::new(&config_path))?;
+    let config = Config::load_config(Path::new(&config_path)).map(Arc::new)?;
     let mut cmd_line = shellwords::split(value.as_str()).unwrap();
     cmd_line.insert(0, "$bin_name".to_string());
 
@@ -96,19 +98,8 @@ fn cmd(env: &Env, value: String) -> emacs::Result<emacs::Value<'_>> {
         Err(_) => clipr_common::Command::Help,
     };
 
-    match call(&config, cmd) {
+    match call(config, cmd) {
         Ok(payload) => payload_to_lisp(&payload, env),
         Err(err) => bail!(err),
     }
-}
-
-// TODO: move to common (http?)
-fn call(config: &Config, cmd: Command) -> Result<Payload> {
-    let uri = format!("http://{}/command", config.listen_on());
-    let rep = reqwest::blocking::Client::new()
-        .post(uri)
-        .json(&cmd)
-        .send()?
-        .json::<Payload>()?;
-    Ok(rep)
 }
