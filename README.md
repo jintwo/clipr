@@ -94,11 +94,14 @@ cp clipr-emacs/src/clipr-mode.el <emacs-load-path>/clipr-mode/
 
 * [ ] Deadline timeout (for sensitive data)
 
+* [/] GC? (remove non tagged/pinned/persistent/old entries)
+      Ring (limited size)?
+
+* [/] Limited size. Only after proper implementation of pinned entries.
+
 * [ ] LaunchD plist
 
 * [X] Save state on quit
-
-* [?] Limited size. Only after proper implementation of pinned entries.
 
 * [ ] GUI/global menu (tag-based folders?)
 

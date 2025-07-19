@@ -6,14 +6,15 @@ use cocoa::foundation::{NSInteger, NSString};
 use rustyline::Editor;
 use std::fs::File;
 use std::io::prelude::*;
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 use std::time::Duration;
 
 mod http;
 
 static USAGE: &str = include_str!("usage.txt");
+static DEFAULT_LIFETIME: Duration = Duration::from_secs(60 * 60 * 24 * 7 * 2);
 
 fn get_change_count() -> NSInteger {
     unsafe { NSPasteboard::generalPasteboard(nil).changeCount() }
@@ -70,6 +71,15 @@ fn clipboard_sync(sender: Sender<clipr_common::Request>) {
     }
 }
 
+fn collect_garbage(duration: Duration, sender: Sender<clipr_common::Request>) {
+    loop {
+        thread::sleep(Duration::from_secs(1));
+        sender
+            .send(clipr_common::Request::Cleanup(duration))
+            .unwrap();
+    }
+}
+
 fn cmd_line_loop(sender: Sender<clipr_common::Request>) {
     let mut rl = Editor::<()>::new().unwrap();
     loop {
@@ -123,6 +133,10 @@ fn event_loop(state: Arc<clipr_common::State>, receiver: Receiver<clipr_common::
         if let Ok(msg) = receiver.recv() {
             match msg {
                 clipr_common::Request::Quit => return,
+                clipr_common::Request::Cleanup(value) => {
+                    let mut entries = s.entries.lock().unwrap();
+                    entries.delete_one_older_than(value, s.config.min_entries.unwrap_or(512))
+                }
                 clipr_common::Request::Sync(value) => {
                     let mut entries = s.entries.lock().unwrap();
                     entries.insert(value)
@@ -321,12 +335,31 @@ fn handle_call(
     })
 }
 
+fn parse_lifetime(s: String) -> Duration {
+    let value = s
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect::<String>()
+        .parse::<u32>()
+        .unwrap_or(1);
+    let unit = s.chars().find(|c| c.is_alphabetic()).unwrap_or('w');
+    let mul: u32 = match unit {
+        's' => 1,
+        'm' => 60,
+        'h' => 60 * 60,
+        'd' => 60 * 60 * 24,
+        'w' => 60 * 60 * 24 * 7,
+        _ => 60 * 60 * 24 * 7,
+    };
+
+    Duration::from_secs((value * mul).into())
+}
+
 fn main() -> Result<()> {
     env_logger::init();
     let args = clipr_common::Args::parse();
     let config = clipr_common::Config::load_from_args(&args)?;
     let state = Arc::new(clipr_common::State::new(config));
-
     // load db at start
     load_db(state.clone())?;
 
@@ -337,12 +370,20 @@ fn main() -> Result<()> {
     }
     {
         let sender = sender.clone();
+        let duration = state
+            .config
+            .lifetime
+            .clone()
+            .map(parse_lifetime)
+            .unwrap_or(DEFAULT_LIFETIME);
+        thread::spawn(move || collect_garbage(duration, sender));
+    }
+    {
+        let sender = sender.clone();
         let state = state.clone();
-        thread::spawn(move || {
-            loop {
-                let result = http::server(state.config.listen_on(), sender.clone());
-                println!("server died with {:?}", result);
-            }
+        thread::spawn(move || loop {
+            let result = http::server(state.config.listen_on(), sender.clone());
+            println!("server died with {result:?}");
         });
     }
     {

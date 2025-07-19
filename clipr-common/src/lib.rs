@@ -10,13 +10,14 @@ use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::Mutex;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 pub const HEADER_LEN: usize = 8;
 
 pub enum Request {
     Sync(String),
     Command(Command, Sender<Response>),
+    Cleanup(Duration),
     Quit,
 }
 
@@ -321,6 +322,31 @@ impl Entries {
         }
     }
 
+    pub fn delete_one_older_than(&mut self, lifetime: Duration, min_entries: usize) {
+        if self.values.len() <= min_entries {
+            return;
+        }
+
+        let deadline = SystemTime::now() - lifetime;
+
+        if let Some(index) = self
+            .values
+            .iter()
+            .enumerate()
+            .find(|(_, item)| {
+                item.accessed_at <= deadline
+                    && item
+                        .tags
+                        .as_ref()
+                        .map(|tags| tags.is_empty())
+                        .unwrap_or(true)
+            })
+            .map(|(index, _)| index)
+        {
+            self.delete(index, None)
+        }
+    }
+
     pub fn delete(&mut self, from_index: usize, to_index: Option<usize>) {
         _drop_list_values(from_index, to_index, &mut self.values);
         _drop_list_values(from_index, to_index, &mut self.hashes);
@@ -486,8 +512,7 @@ impl Entries {
         let hashes_len = self.hashes.len();
         if values_len != hashes_len {
             eprintln!(
-                "Inconsistent state ({} values against {} hashes). Need to rebuild index.",
-                hashes_len, values_len
+                "Inconsistent state ({values_len} values against {hashes_len} hashes). Need to rebuild index.",
             )
         }
         values_len
@@ -504,6 +529,8 @@ pub struct Config {
     pub host: Option<String>,
     pub port: Option<u16>,
     pub db: Option<String>,
+    pub lifetime: Option<String>,
+    pub min_entries: Option<usize>,
 }
 
 impl Config {
@@ -537,10 +564,12 @@ pub struct Args {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            host: Some(String::from("127.0.0.1")),
+            host: Some("127.0.0.1".into()),
             port: Some(8932),
             interactive: Some(true),
-            db: Some(String::from("./db.json")),
+            db: Some("./db.json".into()),
+            lifetime: Some("2w".into()),
+            min_entries: None,
         }
     }
 }

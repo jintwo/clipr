@@ -1,7 +1,7 @@
 use anyhow::bail;
 use chrono::prelude::*;
 use clap::Parser;
-use clipr_common::{Config, Payload, shorten};
+use clipr_common::{shorten, Config, Payload};
 use clipr_daemon::call;
 use emacs::IntoLisp;
 use emacs::{Env, Result, Value};
