@@ -1,58 +1,62 @@
 use anyhow::Result;
-use async_std::channel::{bounded, Receiver, Sender};
-use async_std::fs::File;
-use async_std::prelude::*;
-use async_std::task;
 use clap::Parser;
 use cocoa::appkit::{NSPasteboard, NSPasteboardTypeString};
 use cocoa::base::nil;
 use cocoa::foundation::{NSInteger, NSString};
 use rustyline::Editor;
-use std::fs::File as SyncFile;
+use std::fs::File;
 use std::io::prelude::*;
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
+use std::thread;
 use std::time::Duration;
-use tide::prelude::*;
-use tide::Body;
+
+mod http;
 
 static USAGE: &str = include_str!("usage.txt");
+static DEFAULT_LIFETIME: Duration = Duration::from_secs(60 * 60 * 24 * 7 * 2);
 
-unsafe fn get_change_count() -> NSInteger {
-    NSPasteboard::generalPasteboard(nil).changeCount()
+fn get_change_count() -> NSInteger {
+    unsafe { NSPasteboard::generalPasteboard(nil).changeCount() }
 }
 
-unsafe fn get_current_entry() -> Option<String> {
-    match NSPasteboard::generalPasteboard(nil).stringForType(NSPasteboardTypeString) {
-        nil => None,
-        value => {
-            let bytes = value.UTF8String() as *const u8;
-            let length = value.len();
-            let string = std::str::from_utf8(std::slice::from_raw_parts(bytes, length)).unwrap();
-            Some(String::from(string))
+fn get_current_entry() -> Option<String> {
+    unsafe {
+        match NSPasteboard::generalPasteboard(nil).stringForType(NSPasteboardTypeString) {
+            nil => None,
+            value => {
+                let bytes = value.UTF8String() as *const u8;
+                let length = value.len();
+                let string =
+                    std::str::from_utf8(std::slice::from_raw_parts(bytes, length)).unwrap();
+                Some(String::from(string))
+            }
         }
     }
 }
 
-unsafe fn set_current_entry(s: String) {
-    let pb = NSPasteboard::generalPasteboard(nil);
-    pb.clearContents();
+fn set_current_entry(s: String) {
+    unsafe {
+        let pb = NSPasteboard::generalPasteboard(nil);
+        pb.clearContents();
 
-    let value = NSString::alloc(nil).init_str(&s);
-    pb.setString_forType(value, NSPasteboardTypeString);
+        let value = NSString::alloc(nil).init_str(&s);
+        pb.setString_forType(value, NSPasteboardTypeString);
+    }
 }
 
-async fn clipboard_sync(sender: Sender<clipr_common::Request>) {
+fn clipboard_sync(sender: Sender<clipr_common::Request>) {
     let mut last_hash: u64 = 0;
     let mut last_change_count: i64 = 0;
     loop {
-        task::sleep(Duration::from_millis(500)).await;
-        let change_count = unsafe { get_change_count() };
+        thread::sleep(Duration::from_millis(500));
+        let change_count = get_change_count();
         if last_change_count == change_count {
             continue;
         } else {
             last_change_count = change_count;
         }
-        match unsafe { get_current_entry() } {
+        match get_current_entry() {
             None => continue,
             Some(val) => {
                 let hash = clipr_common::calculate_hash(&val);
@@ -61,13 +65,22 @@ async fn clipboard_sync(sender: Sender<clipr_common::Request>) {
                 }
 
                 last_hash = hash;
-                sender.send(clipr_common::Request::Sync(val)).await.unwrap();
+                sender.send(clipr_common::Request::Sync(val)).unwrap();
             }
         }
     }
 }
 
-async fn repl_loop(sender: Sender<clipr_common::Request>) {
+fn collect_garbage(duration: Duration, sender: Sender<clipr_common::Request>) {
+    loop {
+        thread::sleep(Duration::from_secs(1));
+        sender
+            .send(clipr_common::Request::Cleanup(duration))
+            .unwrap();
+    }
+}
+
+fn cmd_line_loop(sender: Sender<clipr_common::Request>) {
     let mut rl = Editor::<()>::new().unwrap();
     loop {
         let readline = rl.readline(":> ");
@@ -88,7 +101,7 @@ async fn repl_loop(sender: Sender<clipr_common::Request>) {
                     Err(_) => clipr_common::Command::Help,
                 };
 
-                match clipr_common::Request::send_cmd(&sender, cmd).await {
+                match clipr_common::Request::send_cmd(&sender, cmd) {
                     Some(clipr_common::Response::Stop) => return,
                     Some(clipr_common::Response::Payload(val)) => {
                         println!("{}", String::from(&val))
@@ -96,61 +109,45 @@ async fn repl_loop(sender: Sender<clipr_common::Request>) {
                     _ => continue,
                 }
             }
-            Err(_) => sender.send(clipr_common::Request::Quit).await.unwrap(),
+            Err(_) => sender.send(clipr_common::Request::Quit).unwrap(),
         }
     }
 }
 
-async fn empty_fg_loop(sender: Sender<clipr_common::Request>) {
+fn empty_fg_loop(sender: Sender<clipr_common::Request>) {
     let mut rl = Editor::<()>::new().unwrap();
     loop {
         let readline = rl.readline("");
         match readline {
             Ok(_) => continue,
             Err(_) => {
-                sender.send(clipr_common::Request::Quit).await.unwrap();
+                sender.send(clipr_common::Request::Quit).unwrap();
             }
         }
     }
 }
 
-async fn http_server(listen_on: String, sender: Sender<clipr_common::Request>) -> Result<()> {
-    let mut app = tide::with_state(sender);
-    app.at("/command").post(
-        |mut req: tide::Request<Sender<clipr_common::Request>>| async move {
-            // TODO: handle invalid command properly
-            let cmd: clipr_common::Command = req.body_json().await?;
-
-            let sender = req.state();
-
-            match clipr_common::Request::send_cmd(sender, cmd).await {
-                Some(clipr_common::Response::Payload(val)) => Body::from_json(&val),
-                _ => Body::from_json(&json!({})),
-            }
-        },
-    );
-    app.listen(listen_on).await?;
-    Ok(())
-}
-
-async fn event_loop(state: Arc<clipr_common::State>, receiver: Receiver<clipr_common::Request>) {
+fn event_loop(state: Arc<clipr_common::State>, receiver: Receiver<clipr_common::Request>) {
     let s = state.clone();
     loop {
-        if let Ok(msg) = receiver.recv().await {
+        if let Ok(msg) = receiver.recv() {
             match msg {
                 clipr_common::Request::Quit => return,
+                clipr_common::Request::Cleanup(value) => {
+                    let mut entries = s.entries.lock().unwrap();
+                    entries.delete_one_older_than(value, s.config.min_entries.unwrap_or(512))
+                }
                 clipr_common::Request::Sync(value) => {
                     let mut entries = s.entries.lock().unwrap();
                     entries.insert(value)
                 }
                 clipr_common::Request::Command(cmd, sender) => {
-                    let payload = handle_call(s.clone(), cmd).await.unwrap();
+                    let payload = handle_call(s.clone(), cmd).unwrap();
                     match payload {
                         clipr_common::Payload::Stop => return,
                         _ => {
                             sender
                                 .send(clipr_common::Response::Payload(payload))
-                                .await
                                 .unwrap();
                             continue;
                         }
@@ -161,27 +158,27 @@ async fn event_loop(state: Arc<clipr_common::State>, receiver: Receiver<clipr_co
     }
 }
 
-async fn save_db(state: Arc<clipr_common::State>) -> Result<()> {
+fn save_db(state: Arc<clipr_common::State>) -> Result<()> {
     let db_path = state.config.db.as_ref().unwrap();
-    let mut file = File::create(db_path).await?;
-    let data = serde_json::to_string_pretty(&state.entries)?;
-    file.write_all(data.as_bytes()).await?;
-    Ok(())
-}
-
-fn save_db_sync(state: Arc<clipr_common::State>) -> Result<()> {
-    let db_path = state.config.db.as_ref().unwrap();
-    let mut file = SyncFile::create(db_path)?;
+    let mut file = File::create(db_path)?;
     let data = serde_json::to_string_pretty(&state.entries)?;
     file.write_all(data.as_bytes())?;
     Ok(())
 }
 
-async fn load_db(state: Arc<clipr_common::State>) -> Result<()> {
+fn save_db_sync(state: Arc<clipr_common::State>) -> Result<()> {
     let db_path = state.config.db.as_ref().unwrap();
-    let mut file = File::open(db_path).await?;
+    let mut file = File::create(db_path)?;
+    let data = serde_json::to_string_pretty(&state.entries)?;
+    file.write_all(data.as_bytes())?;
+    Ok(())
+}
+
+fn load_db(state: Arc<clipr_common::State>) -> Result<()> {
+    let db_path = state.config.db.as_ref().unwrap();
+    let mut file = File::open(db_path)?;
     let mut buffer = String::new();
-    file.read_to_string(&mut buffer).await?;
+    file.read_to_string(&mut buffer)?;
     let data: clipr_common::Entries = serde_json::from_str(buffer.as_str())?;
     let mut entries = state.entries.lock().unwrap();
     *entries = data;
@@ -190,7 +187,7 @@ async fn load_db(state: Arc<clipr_common::State>) -> Result<()> {
 }
 
 // TODO: use state.handle_call + Mutex around State
-async fn handle_call(
+fn handle_call(
     state: Arc<clipr_common::State>,
     cmd: clipr_common::Command,
 ) -> Result<clipr_common::Payload> {
@@ -214,11 +211,11 @@ async fn handle_call(
             }
         }
         clipr_common::Command::Save => {
-            save_db(state.clone()).await.unwrap();
+            save_db(state.clone()).unwrap();
             clipr_common::Payload::Ok
         }
         clipr_common::Command::Load => {
-            load_db(state.clone()).await.unwrap();
+            load_db(state.clone()).unwrap();
             clipr_common::Payload::Ok
         }
         clipr_common::Command::Get { index } => {
@@ -231,20 +228,20 @@ async fn handle_call(
             }
         }
         clipr_common::Command::Add { value } => {
-            unsafe { set_current_entry(value.join(" ")) };
+            set_current_entry(value.join(" "));
             clipr_common::Payload::Ok
         }
         clipr_common::Command::Insert { filename } => {
-            let mut file = File::open(filename).await?;
+            let mut file = File::open(filename)?;
             let mut buffer = String::new();
-            file.read_to_string(&mut buffer).await?;
-            unsafe { set_current_entry(buffer) };
+            file.read_to_string(&mut buffer)?;
+            set_current_entry(buffer);
             clipr_common::Payload::Ok
         }
         clipr_common::Command::Set { index } => {
             let mut entries = state.entries.lock().unwrap();
             if let Some(value) = entries.get_value(index) {
-                unsafe { set_current_entry(value) };
+                set_current_entry(value);
                 clipr_common::Payload::Ok
             } else {
                 clipr_common::Payload::Message {
@@ -312,7 +309,7 @@ async fn handle_call(
 
             if set && !items.is_empty() {
                 let (_, item) = &items[0];
-                unsafe { set_current_entry(item.value.clone()) };
+                set_current_entry(item.value.clone());
                 clipr_common::Payload::Ok
             } else {
                 clipr_common::Payload::List {
@@ -338,20 +335,68 @@ async fn handle_call(
     })
 }
 
+fn parse_lifetime(s: String) -> Duration {
+    let value = s
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect::<String>()
+        .parse::<u32>()
+        .unwrap_or(1);
+    let unit = s.chars().find(|c| c.is_alphabetic()).unwrap_or('w');
+    let mul: u32 = match unit {
+        's' => 1,
+        'm' => 60,
+        'h' => 60 * 60,
+        'd' => 60 * 60 * 24,
+        'w' => 60 * 60 * 24 * 7,
+        _ => 60 * 60 * 24 * 7,
+    };
+
+    Duration::from_secs((value * mul).into())
+}
+
 fn main() -> Result<()> {
     env_logger::init();
     let args = clipr_common::Args::parse();
     let config = clipr_common::Config::load_from_args(&args)?;
     let state = Arc::new(clipr_common::State::new(config));
-    let (sender, receiver) = bounded::<clipr_common::Request>(1);
-    task::spawn(clipboard_sync(sender.clone()));
-    task::spawn(http_server(state.config.listen_on(), sender.clone()));
-    if !state.config.interactive.unwrap_or(false) {
-        task::spawn(empty_fg_loop(sender));
-    } else {
-        task::spawn(repl_loop(sender));
+    // load db at start
+    load_db(state.clone())?;
+
+    let (sender, receiver) = channel::<clipr_common::Request>();
+    {
+        let sender = sender.clone();
+        thread::spawn(move || clipboard_sync(sender));
     }
-    task::block_on(event_loop(state.clone(), receiver));
+    {
+        let sender = sender.clone();
+        let duration = state
+            .config
+            .lifetime
+            .clone()
+            .map(parse_lifetime)
+            .unwrap_or(DEFAULT_LIFETIME);
+        thread::spawn(move || collect_garbage(duration, sender));
+    }
+    {
+        let sender = sender.clone();
+        let state = state.clone();
+        thread::spawn(move || loop {
+            let result = http::server(state.config.listen_on(), sender.clone());
+            println!("server died with {result:?}");
+        });
+    }
+    {
+        let sender = sender.clone();
+        if !state.config.interactive.unwrap_or(false) {
+            thread::spawn(move || empty_fg_loop(sender));
+        } else {
+            thread::spawn(move || cmd_line_loop(sender));
+        }
+    }
+
+    event_loop(state.clone(), receiver);
+
     // sync state at exit
     save_db_sync(state)?;
     Ok(())

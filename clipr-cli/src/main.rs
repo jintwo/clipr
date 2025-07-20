@@ -1,22 +1,15 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use clap::Parser;
-use clipr_common::{Args, Command, Config, Payload};
-use std::sync::Arc;
+use clipr_common::{Args, Config};
 
-async fn call(config: Arc<Config>, cmd: Command) -> Result<Payload, surf::Error> {
-    let uri = format!("http://{}/command", config.listen_on());
-    let req = surf::post(uri).body_json(&cmd)?;
-    let rep: Payload = req.recv_json().await?;
-    Ok(rep)
-}
+use clipr_daemon::call;
 
-#[async_std::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let args = Args::parse();
-    let config = Arc::new(Config::load_from_args(&args)?);
+    let config = Config::load_from_args(&args)?;
 
     if let Some(cmd) = args.command {
-        match call(config, cmd).await {
+        match call(&config, cmd) {
             Ok(payload) => println!("{}", String::from(&payload)),
             Err(err) => bail!(err),
         }
