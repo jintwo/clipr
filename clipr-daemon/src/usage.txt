@@ -1,5 +1,5 @@
 USAGE:
- list [from-index] [to-index]
+ list|ls [from-index] [to-index]
  count
  save
  load

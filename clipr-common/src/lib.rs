@@ -58,6 +58,7 @@ pub enum Payload {
 
 #[derive(Debug, Subcommand, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
+#[clap(disable_help_subcommand = true)]
 pub enum Command {
     Add {
         #[clap(last = true)]
@@ -67,6 +68,7 @@ pub enum Command {
         from_index: usize,
         to_index: Option<usize>,
     },
+    #[clap(alias = "ls")]
     List {
         from_index: Option<usize>,
         to_index: Option<usize>,
@@ -322,9 +324,9 @@ impl Entries {
         }
     }
 
-    pub fn delete_one_older_than(&mut self, lifetime: Duration, min_entries: usize) {
+    pub fn delete_one_older_than(&mut self, lifetime: Duration, min_entries: usize) -> bool {
         if self.values.len() <= min_entries {
-            return;
+            return false;
         }
 
         let deadline = SystemTime::now() - lifetime;
@@ -343,8 +345,11 @@ impl Entries {
             })
             .map(|(index, _)| index)
         {
-            self.delete(index, None)
+            self.delete(index, None);
+            return true;
         }
+
+        false
     }
 
     pub fn delete(&mut self, from_index: usize, to_index: Option<usize>) {

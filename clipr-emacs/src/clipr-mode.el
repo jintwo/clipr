@@ -1,4 +1,4 @@
-;;; clipr-mode.el --- Clipr major mode
+;;; clipr-mode.el --- Clipr major mode  -*- lexical-binding: t; -*-
 ;;; Commentary:
 ;;; Code:
 
@@ -23,7 +23,12 @@
   :group 'clipr)
 
 (defcustom clipr-item-preview-length 128
-  "Clipr item preview lingth."
+  "Clipr item preview length."
+  :type 'integer
+  :group 'clipr)
+
+(defcustom clipr-list-size 1024
+  "Clipr list size."
   :type 'integer
   :group 'clipr)
 
@@ -39,7 +44,7 @@
    ("Content" 35 nil)]
   "Clipr list format.")
 
-(defconst clipr--default-query-cmd (string-join (list "list" "0" "128" (number-to-string clipr-item-preview-length)) " "))
+(defconst clipr--default-query-cmd (string-join (list "list" "0" (number-to-string clipr-list-size) (number-to-string clipr-item-preview-length)) " "))
 
 (defconst clipr--default-action 'clipr-select-and-quit)
 

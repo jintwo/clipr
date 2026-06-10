@@ -135,7 +135,13 @@ fn event_loop(state: Arc<clipr_common::State>, receiver: Receiver<clipr_common::
                 clipr_common::Request::Quit => return,
                 clipr_common::Request::Cleanup(value) => {
                     let mut entries = s.entries.lock().unwrap();
-                    entries.delete_one_older_than(value, s.config.min_entries.unwrap_or(512))
+                    loop {
+                        if !entries
+                            .delete_one_older_than(value, s.config.min_entries.unwrap_or(512))
+                        {
+                            break;
+                        }
+                    }
                 }
                 clipr_common::Request::Sync(value) => {
                     let mut entries = s.entries.lock().unwrap();
