@@ -1,7 +1,7 @@
 [package]
 name = "clipr-daemon"
 version = "0.1.0"
-edition = "2024"
+edition = { workspace = true }
 
 [dependencies]
 anyhow = { workspace = true }
@@ -9,9 +9,10 @@ clap = { workspace = true }
 serde_json = { workspace = true }
 shellwords = { workspace = true }
 clipr-common = { path = "../clipr-common" }
-cocoa = { version = "0.24.0" }
 objc = "0.2.3"
-rustyline = "10.0.0"
-env_logger = "0.9.0"
+rustyline = "18.0.0"
+env_logger = "0.11.10"
 httparse = "1.8.0"
 socket2 = { workspace = true }
+objc2-app-kit = "0.3.2"
+objc2-foundation = "0.3.2"

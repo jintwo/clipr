@@ -1,53 +1,50 @@
 use anyhow::Result;
 use clap::Parser;
-use cocoa::appkit::{NSPasteboard, NSPasteboardTypeString};
-use cocoa::base::nil;
-use cocoa::foundation::{NSInteger, NSString};
-use rustyline::Editor;
+use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+use objc2_foundation::{NSInteger, NSString};
+use rustyline::DefaultEditor;
 use std::fs::File;
 use std::io::prelude::*;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-
 mod http;
 
 static USAGE: &str = include_str!("usage.txt");
 static DEFAULT_LIFETIME: Duration = Duration::from_secs(60 * 60 * 24 * 7 * 2);
 
 fn get_change_count() -> NSInteger {
-    unsafe { NSPasteboard::generalPasteboard(nil).changeCount() }
+    NSPasteboard::generalPasteboard().changeCount()
 }
 
 fn get_current_entry() -> Option<String> {
     unsafe {
-        match NSPasteboard::generalPasteboard(nil).stringForType(NSPasteboardTypeString) {
-            nil => None,
-            value => {
-                let bytes = value.UTF8String() as *const u8;
-                let length = value.len();
-                let string =
-                    std::str::from_utf8(std::slice::from_raw_parts(bytes, length)).unwrap();
-                Some(String::from(string))
-            }
+        if let Some(value) = NSPasteboard::generalPasteboard().stringForType(NSPasteboardTypeString)
+        {
+            let bytes = value.UTF8String() as *const u8;
+            let length = value.len();
+            let string = std::str::from_utf8(std::slice::from_raw_parts(bytes, length)).unwrap();
+            Some(String::from(string))
+        } else {
+            None
         }
     }
 }
 
 fn set_current_entry(s: String) {
     unsafe {
-        let pb = NSPasteboard::generalPasteboard(nil);
+        let pb = NSPasteboard::generalPasteboard();
         pb.clearContents();
 
-        let value = NSString::alloc(nil).init_str(&s);
-        pb.setString_forType(value, NSPasteboardTypeString);
+        let value = NSString::from_str(&s);
+        pb.setString_forType(&value, NSPasteboardTypeString);
     }
 }
 
 fn clipboard_sync(sender: Sender<clipr_common::Request>) {
     let mut last_hash: u64 = 0;
-    let mut last_change_count: i64 = 0;
+    let mut last_change_count: isize = 0;
     loop {
         thread::sleep(Duration::from_millis(500));
         let change_count = get_change_count();
@@ -81,7 +78,7 @@ fn collect_garbage(duration: Duration, sender: Sender<clipr_common::Request>) {
 }
 
 fn cmd_line_loop(sender: Sender<clipr_common::Request>) {
-    let mut rl = Editor::<()>::new().unwrap();
+    let mut rl = DefaultEditor::new().unwrap();
     loop {
         let readline = rl.readline(":> ");
         match readline {
@@ -90,7 +87,7 @@ fn cmd_line_loop(sender: Sender<clipr_common::Request>) {
                     continue;
                 }
 
-                rl.add_history_entry(line.as_str());
+                let _ = rl.add_history_entry(line.as_str());
 
                 let mut cmd_line = shellwords::split(line.as_str()).unwrap();
                 let bin_name = std::env::args().next().unwrap();
@@ -115,7 +112,7 @@ fn cmd_line_loop(sender: Sender<clipr_common::Request>) {
 }
 
 fn empty_fg_loop(sender: Sender<clipr_common::Request>) {
-    let mut rl = Editor::<()>::new().unwrap();
+    let mut rl = DefaultEditor::new().unwrap();
     loop {
         let readline = rl.readline("");
         match readline {
