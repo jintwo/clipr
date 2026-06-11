@@ -16,3 +16,4 @@ httparse = "1.8.0"
 socket2 = { workspace = true }
 objc2-app-kit = "0.3.2"
 objc2-foundation = "0.3.2"
+regex = "1.12.4"

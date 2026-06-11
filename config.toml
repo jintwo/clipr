@@ -4,3 +4,6 @@ interactive = true
 db = "./db.json"
 lifetime = "1w"
 min_entries = 512
+
+[rewrites]
+mattermost = { regex = '^https://(?<url>mm\.company\.net/.*$)', rewrite = 'mattermost://$url' }

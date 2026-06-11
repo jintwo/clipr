@@ -105,6 +105,8 @@ cp clipr-emacs/src/clipr-mode.el <emacs-load-path>/clipr-mode/
 
 * [ ] GUI/global menu (tag-based folders?)
 
+* [X] Rewrite
+
 ### Refactoring [1/5]
 
 * [X] Switch to LINKED-LIST + SET (or w/o). Looks like it will be a lot easier to reorder entries.

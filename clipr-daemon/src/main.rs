@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
 use objc2_foundation::{NSInteger, NSString};
+use regex::Regex;
 use rustyline::DefaultEditor;
 use std::fs::File;
 use std::io::prelude::*;
@@ -42,7 +43,7 @@ fn set_current_entry(s: String) {
     }
 }
 
-fn clipboard_sync(sender: Sender<clipr_common::Request>) {
+fn clipboard_sync(rewrites: Vec<(Regex, String)>, sender: Sender<clipr_common::Request>) {
     let mut last_hash: u64 = 0;
     let mut last_change_count: isize = 0;
     loop {
@@ -59,6 +60,12 @@ fn clipboard_sync(sender: Sender<clipr_common::Request>) {
                 let hash = clipr_common::calculate_hash(&val);
                 if last_hash == hash {
                     continue;
+                }
+
+                // INFO: replacing stuff
+                for (regex, replace) in &rewrites {
+                    let result = regex.replace_all(&val, replace);
+                    set_current_entry(result.to_string());
                 }
 
                 last_hash = hash;
@@ -362,6 +369,13 @@ fn main() -> Result<()> {
     env_logger::init();
     let args = clipr_common::Args::parse();
     let config = clipr_common::Config::load_from_args(&args)?;
+    let mut built_rewrites: Vec<(Regex, String)> = vec![];
+
+    if let Some(ref rewrites) = config.rewrites {
+        built_rewrites = rewrites.values()
+            .map(|rw| (Regex::new(&rw.regex).unwrap(), rw.rewrite.clone()))
+            .collect();
+    }
     let state = Arc::new(clipr_common::State::new(config));
     // load db at start
     load_db(state.clone())?;
@@ -369,7 +383,7 @@ fn main() -> Result<()> {
     let (sender, receiver) = channel::<clipr_common::Request>();
     {
         let sender = sender.clone();
-        thread::spawn(move || clipboard_sync(sender));
+        thread::spawn(move || clipboard_sync(built_rewrites, sender));
     }
     {
         let sender = sender.clone();

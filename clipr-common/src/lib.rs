@@ -3,7 +3,7 @@ use chrono::prelude::*;
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
-use std::collections::{HashSet, LinkedList};
+use std::collections::{HashMap, HashSet, LinkedList};
 use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::io::prelude::*;
@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
+use std::vec::Vec;
 
 pub const HEADER_LEN: usize = 8;
 
@@ -529,6 +530,12 @@ impl Entries {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct Rewrite {
+    pub regex: String,
+    pub rewrite: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct Config {
     pub interactive: Option<bool>,
     pub host: Option<String>,
@@ -536,6 +543,7 @@ pub struct Config {
     pub db: Option<String>,
     pub lifetime: Option<String>,
     pub min_entries: Option<usize>,
+    pub rewrites: Option<HashMap<String, Rewrite>>,
 }
 
 impl Config {
@@ -575,6 +583,7 @@ impl Default for Config {
             db: Some("./db.json".into()),
             lifetime: Some("2w".into()),
             min_entries: None,
+            rewrites: None,
         }
     }
 }
