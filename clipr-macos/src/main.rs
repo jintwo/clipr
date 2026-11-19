@@ -1,13 +1,11 @@
 use std::path::Path;
 use std::process;
 
-use chrono::prelude::*;
-
 use objc2::rc::Retained;
-#[cfg(target_os = "macos")]
-use objc2::runtime::AnyObject;
 use objc2::runtime::ProtocolObject;
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
+#[cfg(target_os = "macos")]
+use objc2_app_kit::NSMenuDelegate;
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSEvent, NSMenu,
     NSMenuItem,
@@ -61,6 +59,13 @@ define_class!(
         }
     }
 
+    unsafe impl NSMenuDelegate for Delegate {
+        #[unsafe(method(menuDidClose:))]
+        fn did_close(&self, menu: &NSMenu) {
+            process::exit(0);
+        }
+    }
+
 );
 
 pub fn format_item(item: &Item, short: bool, preview_length: Option<usize>) -> (String, String) {
@@ -96,6 +101,7 @@ impl Delegate {
         let mtm = self.mtm();
 
         let menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), ns_string!("ClipR"));
+        menu.setDelegate(Some(ProtocolObject::from_ref(self)));
 
         let config = Config::load_config(Path::new(
             "/Users/jin/Documents/dev/projects/clipr/config.toml",
