@@ -244,6 +244,7 @@ name = "clipr-macos"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "clipr-common",
  "clipr-daemon",

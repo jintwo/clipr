@@ -1,6 +1,8 @@
 use std::path::Path;
 use std::process;
 
+use chrono::prelude::*;
+
 use objc2::rc::Retained;
 #[cfg(target_os = "macos")]
 use objc2::runtime::AnyObject;
@@ -14,7 +16,7 @@ use objc2_foundation::{
     MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSString, ns_string,
 };
 
-use clipr_common::{Command, Config, Payload};
+use clipr_common::{Command, Config, MAX_LEN, Payload, shorten, Item};
 use clipr_daemon::call;
 
 #[derive(Debug, Default)]
@@ -61,6 +63,28 @@ define_class!(
 
 );
 
+pub fn format_item(item: &Item, short: bool, preview_length: Option<usize>) -> (String, String) {
+    let val = if short {
+        shorten(&item.value, preview_length)
+    } else {
+        item.value.clone()
+    };
+
+    let tags = match &item.tags {
+        Some(tags) => {
+            let mut ts = tags.iter().map(|v| v.as_str()).collect::<Vec<&str>>();
+            ts.sort();
+            ts.join(",")
+        }
+        None => "".to_string(),
+    };
+
+    let max_len = preview_length.unwrap_or(MAX_LEN);
+
+    (format!("{:<max_len$}", val), tags)
+}
+
+
 impl Delegate {
     fn new(mtm: MainThreadMarker) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(AppDelegateIvars::default());
@@ -80,7 +104,7 @@ impl Delegate {
 
         let cmd = Command::List {
             from_index: Some(0),
-            to_index: Some(5),
+            to_index: Some(10),
             preview_length: Some(5),
         };
 
@@ -92,16 +116,19 @@ impl Delegate {
         {
             for (idx, item) in value {
                 unsafe {
-                    let item = NSMenuItem::initWithTitle_action_keyEquivalent(
+                    let (item_value, item_tags) = format_item(&item, true, Some(32));
+                    let menu_item = NSMenuItem::initWithTitle_action_keyEquivalent(
                         NSMenuItem::alloc(mtm),
-                        &NSString::from_str(item.value.as_str()),
+                        &NSString::from_str(item_value.as_str()),
                         None,
-                        &NSString::from_str(format!("{}", idx).as_str()),
+                        &NSString::from_str(format!("{}", (idx + 1) % 10).as_str()),
                     );
-                    item.setTarget(Some(self));
-                    item.setAction(Some(sel!(selectItem:)));
-                    item.setTag(idx.try_into().unwrap());
-                    menu.addItem(&item);
+                    menu_item.setTarget(Some(self));
+                    menu_item.setAction(Some(sel!(selectItem:)));
+                    menu_item.setTag(idx.try_into().unwrap());
+
+                    menu_item.setSubtitle(Some(&NSString::from_str(item_tags.as_str())));
+                    menu.addItem(&menu_item);
                 }
             }
         }

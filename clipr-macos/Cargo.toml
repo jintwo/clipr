@@ -5,6 +5,7 @@ edition = { workspace = true }
 
 [dependencies]
 anyhow = { workspace = true }
+chrono = { workspace = true }
 clap = { workspace = true }
 clipr-common = { path = "../clipr-common" }
 clipr-daemon = { path = "../clipr-daemon" }
