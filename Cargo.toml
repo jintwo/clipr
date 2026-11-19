@@ -1,5 +1,5 @@
 [workspace]
-members = ["clipr-common", "clipr-daemon", "clipr-cli", "clipr-emacs"]
+members = ["clipr-common", "clipr-daemon", "clipr-cli", "clipr-emacs", "clipr-macos"]
 resolver = "3"
 
 [workspace.package]

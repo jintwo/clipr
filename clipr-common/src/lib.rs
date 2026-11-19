@@ -45,6 +45,7 @@ pub enum Payload {
     Ok,
     List {
         value: Vec<(usize, Item)>,
+        // TODO: drop it? use something like ShortItem
         preview_length: Option<usize>,
     },
     Value {
@@ -162,6 +163,7 @@ pub const MAX_LEN: usize = 64;
 const SPACER_LEN: usize = 4;
 const PREFIX_LEN: usize = 16;
 
+// TODO: rewrite/simplify
 pub fn shorten(s: &str, max_len: Option<usize>) -> String {
     let chars = s.chars();
     let length = s.chars().count();
@@ -326,6 +328,7 @@ impl Entries {
     }
 
     pub fn delete_one_older_than(&mut self, lifetime: Duration, min_entries: usize) -> bool {
+        // remove entries older than LIFETIME and only UNTAGGED
         if self.values.len() <= min_entries {
             return false;
         }

@@ -103,7 +103,7 @@ cp clipr-emacs/src/clipr-mode.el <emacs-load-path>/clipr-mode/
 
 * [X] Save state on quit
 
-* [ ] GUI/global menu (tag-based folders?)
+* [ ] GUI/global menu (tag-based folders?) [WIP]
 
 * [X] Rewrite
 
@@ -134,3 +134,5 @@ cp clipr-emacs/src/clipr-mode.el <emacs-load-path>/clipr-mode/
 * [X] If there is no changes in PB we still allocating NSString
 
 * [ ] After cleanup memory usage doesn't goes down
+
+* [ ] IMPORTANT! Don't send full dump in list - use only previews
