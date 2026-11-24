@@ -149,6 +149,9 @@ impl Delegate {
             let idx: usize = selected_item.tag().try_into().unwrap();
             self.ivars().menu_item_tag.replace(Some(idx));
         }
+
+        let app = NSApplication::sharedApplication(self.mtm());
+        app.terminate(None);
     }
 
     fn destroy(&self) {
