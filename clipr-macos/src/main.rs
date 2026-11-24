@@ -1,5 +1,8 @@
+use std::cell::RefCell;
+use std::ops::Deref;
 use std::path::Path;
 use std::process;
+use std::rc::Rc;
 
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
@@ -18,7 +21,9 @@ use clipr_common::{Command, Config, MAX_LEN, Payload, shorten, Item};
 use clipr_daemon::call;
 
 #[derive(Debug, Default)]
-struct AppDelegateIvars {}
+struct Ivars {
+    menu_item_tag: Rc<RefCell<Option<usize>>>
+}
 
 #[cfg(target_os = "macos")]
 define_class!(
@@ -27,7 +32,7 @@ define_class!(
     // - `Delegate` does not implement `Drop`.
     #[unsafe(super = NSObject)]
     #[thread_kind = MainThreadOnly]
-    #[ivars = AppDelegateIvars]
+    #[ivars = Ivars]
     struct Delegate;
 
     // SAFETY: `NSObjectProtocol` has no safety requirements.
@@ -50,19 +55,16 @@ define_class!(
             self.init();
         }
 
-        #[unsafe(method(selectItem:))]
-        fn select_item(&self, sender: Option<&NSMenuItem>) {
-            if let Some(menu_item) = sender {
-                self.handler(menu_item)
-            }
-            process::exit(0);
+        #[unsafe(method(applicationWillTerminate:))]
+        fn will_terminate(&self, notification: &NSNotification) {
+            self.destroy();
         }
     }
 
     unsafe impl NSMenuDelegate for Delegate {
         #[unsafe(method(menuDidClose:))]
         fn did_close(&self, menu: &NSMenu) {
-            process::exit(0);
+            self.on_close(menu);
         }
     }
 
@@ -92,7 +94,9 @@ pub fn format_item(item: &Item, short: bool, preview_length: Option<usize>) -> (
 
 impl Delegate {
     fn new(mtm: MainThreadMarker) -> Retained<Self> {
-        let this = Self::alloc(mtm).set_ivars(AppDelegateIvars::default());
+        let this = mtm.alloc().set_ivars(Ivars {
+            menu_item_tag: Rc::new(RefCell::new(None))
+        });
         // SAFETY: The signature of `NSObject`'s `init` method is correct.
         unsafe { msg_send![super(this), init] }
     }
@@ -126,11 +130,9 @@ impl Delegate {
                     let menu_item = NSMenuItem::initWithTitle_action_keyEquivalent(
                         NSMenuItem::alloc(mtm),
                         &NSString::from_str(item_value.as_str()),
-                        None,
+                        Some(sel!(terminate:)),
                         &NSString::from_str(format!("{}", (idx + 1) % 10).as_str()),
                     );
-                    menu_item.setTarget(Some(self));
-                    menu_item.setAction(Some(sel!(selectItem:)));
                     menu_item.setTag(idx.try_into().unwrap());
 
                     menu_item.setSubtitle(Some(&NSString::from_str(item_tags.as_str())));
@@ -142,19 +144,28 @@ impl Delegate {
         menu.popUpMenuPositioningItem_atLocation_inView(None, NSEvent::mouseLocation(), None);
     }
 
-    fn handler(&self, sender: &NSMenuItem) {
-        let idx: usize = sender.tag().try_into().unwrap();
+    fn on_close(&self, sender: &NSMenu) {
+        if let Some(selected_item) = sender.highlightedItem() {
+            let idx: usize = selected_item.tag().try_into().unwrap();
+            self.ivars().menu_item_tag.replace(Some(idx));
+        }
+    }
 
-        let config = Config::load_config(Path::new(
-            "/Users/jin/Documents/dev/projects/clipr/config.toml",
-        ))
-        .unwrap();
+    fn destroy(&self) {
+        let tag = self.ivars().menu_item_tag.borrow();
 
-        let cmd = Command::Set {
-            index: idx
-        };
+        if let Some(idx) = tag.deref() {
+            let config = Config::load_config(Path::new(
+                "/Users/jin/Documents/dev/projects/clipr/config.toml",
+            ))
+                .unwrap();
 
-        call(&config, cmd).unwrap();
+            let cmd = Command::Set {
+                index: *idx
+            };
+
+            call(&config, cmd).unwrap();
+        }
     }
 }
 
